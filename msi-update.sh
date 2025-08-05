@@ -113,6 +113,7 @@ echo ""
 # ─── Variables ───────────────────────────────────────────────
 
 CONTAINERS_DIR="/srv/media/containers"
+LAST_RUN_FILE="/var/log/media-maintenance-last-run.log"
 
 # ─── System Checks ───────────────────────────────────────────
 
@@ -132,6 +133,36 @@ if [[ $EUID -ne 0 ]]; then
 fi
 print_success "Root privileges"
 
+pause
+
+print_status "Checking date -d support"
+if ! date -d "2020-01-01" &>/dev/null; then
+    abort "'date -d' is not supported on this system. Install GNU coreutils or use a compatible Linux distribution."
+fi
+print_success "date -d is supported"
+pause
+
+print_status "Checking last run timestamp"
+if [[ -f "$LAST_RUN_FILE" ]]; then
+    LAST_RUN=$(cat "$LAST_RUN_FILE")
+    LAST_RUN_EPOCH=$(date -d "$LAST_RUN" +%s)
+    NOW_EPOCH=$(date +%s)
+    DIFF_SEC=$((NOW_EPOCH - LAST_RUN_EPOCH))
+
+    if (( DIFF_SEC < 60 )); then
+        DELTA="$DIFF_SEC seconds ago"
+    elif (( DIFF_SEC < 3600 )); then
+        DELTA="$((DIFF_SEC / 60)) minutes ago"
+    elif (( DIFF_SEC < 86400 )); then
+        DELTA="$((DIFF_SEC / 3600)) hours ago"
+    else
+        DELTA="$((DIFF_SEC / 86400)) days ago"
+    fi
+
+    print_success "Last run: $LAST_RUN ($DELTA)"
+else
+    print_success "No previous run recorded"
+fi
 pause
 
 # ─── System Updates ─────────────────────────────────────────
@@ -170,5 +201,15 @@ print_success "Unused Docker images have been pruned"
 # ─── Final Info ─────────────────────────────────────────────
 
 echo "Docker system maintenance completed successfully."
+
+if [[ ! -f "$LAST_RUN_FILE" ]]; then
+    touch "$LAST_RUN_FILE"
+    chown root:root "$LAST_RUN_FILE"
+    chmod 644 "$LAST_RUN_FILE"
+fi
+
+date '+%Y-%m-%d %H:%M:%S' > "$LAST_RUN_FILE"
+
+pause
 
 exit 0

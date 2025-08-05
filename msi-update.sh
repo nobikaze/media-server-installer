@@ -124,7 +124,9 @@ for cmd in apt docker; do
     print_success "$cmd is installed"
 done
 
+print_status "Checking Docker service"
 systemctl is-active --quiet docker || abort "Docker service is not running"
+print_success "Docker service is running"
 
 print_status "Checking root privileges"
 if [[ $EUID -ne 0 ]]; then

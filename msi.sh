@@ -280,7 +280,6 @@ PGID=$(id -g "$docker_user")
 
 mkdir -p "$SRV_DIR"
 mkdir -p "$CONTAINER_DIR"/{prowlarr,sonarr,radarr,bazarr,qbittorrent,jellyfin}/config \
-         "$CONTAINER_DIR"/jellyfin/cache \
          "$LIBRARY_DIR"/{movies,shows,downloads}
 
 chown -R "$docker_user:$docker_user" "$SRV_DIR"
@@ -386,7 +385,10 @@ services:
       - "TZ=${USER_TZ}"
     volumes:
       - ./jellyfin/config:/config
-      - ./jellyfin/cache:/cache
+      - type: tmpfs
+        target: /cache
+        tmpfs:
+          size: 1g
       - type: bind
         source: ${LIBRARY_DIR}
         target: /media

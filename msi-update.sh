@@ -86,6 +86,8 @@ ascii_art=(
 ""
 "Automates the installation of Jellyfin on a Linux server"
 "using Docker and other required tools."
+""
+"System Maintenance Script"
 )
 
 animated_echo() {

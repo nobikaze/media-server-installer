@@ -388,7 +388,7 @@ services:
       - type: tmpfs
         target: /cache
         tmpfs:
-          size: 1g
+          size: 128M
       - type: bind
         source: ${LIBRARY_DIR}
         target: /media

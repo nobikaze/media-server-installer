@@ -435,7 +435,7 @@ ssh -N \\
   -L 127.0.0.1:8080:127.0.0.1:8080 \\
   $tunnel_user@your-server-ip
 
-Use 'sudo msi update' command for updates.
+Use 'sudo msi-update' command for updates.
 
 ✅ Media server setup complete!
 EOF

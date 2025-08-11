@@ -416,10 +416,7 @@ print_success "Media stack up"
 # ─── MSI Update Script ──────────────────────────────────────
 
 print_status "Installing 'msi-update' script"
-
-cp ./msi-update.sh /usr/local/bin/msi-update
-chmod +x /usr/local/bin/msi-update
-
+install -m 0755 ./msi-update.sh /usr/local/bin/msi-update
 print_success "'msi-update' command installed"
 
 # ─── Final Info ─────────────────────────────────────────────

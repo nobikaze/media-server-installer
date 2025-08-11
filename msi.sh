@@ -138,17 +138,17 @@ print_success "Root privileges"
 echo "Collecting configuration"
 while true; do
   while true; do
-    read -p "[1/5] Allowed CIDR IP (e.g. 192.168.1.0/24): " cidr
+    read -r -p "[1/5] Allowed CIDR IP (e.g. 192.168.1.0/24): " cidr
     [[ "$cidr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]] && break
     echo "❌ Invalid CIDR format. Try again."
   done
   while true; do
-    read -p "[2/5] Docker username: " docker_user
+    read -r -p "[2/5] Docker username: " docker_user
     [[ "$docker_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] && id "$docker_user" &>/dev/null && break
     echo "❌ Invalid or non-existent username. Try again."
   done
   while true; do
-    read -p "[3/5] Timezone (e.g. America/New_York): " USER_TZ
+    read -r -p "[3/5] Timezone (e.g. America/New_York): " USER_TZ
     if [ -f "/usr/share/zoneinfo/$USER_TZ" ]; then
       break
     else
@@ -156,16 +156,16 @@ while true; do
     fi
   done
   while true; do
-    read -p "[4/5] Tunnel user: " tunnel_user
+    read -r -p "[4/5] Tunnel user: " tunnel_user
     [[ "$tunnel_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] && break
     echo "❌ Invalid username format. Try again."
   done
   while true; do
-    read -s -p "[4.5/5] Tunnel user password: " tunnel_pass && echo
+    read -r -s -p "[4.5/5] Tunnel user password: " tunnel_pass && echo
     [[ ${#tunnel_pass} -ge 6 ]] && break
     echo "❌ Password must be at least 6 characters long."
   done
-  read -p "[5/5] Optional MOTD path (e.g. /etc/motd): " motd_path
+  read -r -p "[5/5] Optional MOTD path (e.g. /etc/motd): " motd_path
 
   echo -e "\nConfiguration summary:"
   echo -e "  IP CIDR:         $cidr"
@@ -174,7 +174,7 @@ while true; do
   echo -e "  Tunnel user:     $tunnel_user"
   echo -e "  MOTD path:       $motd_path"
 
-  read -p "Proceed? (y/n): " yn
+  read -r -p "Proceed? (y/n): " yn
   [[ "$yn" == "y" ]] && break
 done
 

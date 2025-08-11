@@ -10,7 +10,7 @@
  ░██   ░██   ░██  ░███████  ░██░██  ░███████  ░██    ░██
 </pre>
 
-Automated installer script for setting up a self-hosted media server using **Docker** and services like **Jellyfin**, **Sonarr**, **Radarr**, **Prowlarr**, **Bazarr**, and **qBittorrent**.
+Automated installer script for setting up a self-hosted media server using **Docker** and services like **Jellyfin**, **Sonarr**, **Radarr**, **Prowlarr**, **Bazarr**, **qBittorrent**, and **JDownloader 2**.
 
 ## 📦 What It Does
 
@@ -86,6 +86,7 @@ This will:
 | Prowlarr     | 9696 | Indexer manager     |
 | Bazarr       | 6767 | Subtitle management |
 | qBittorrent  | 8080 | Torrent client      |
+| JDownloader 2| 5800 | Downloader manager  |
 
 All services except **Jellyfin** are **bound to localhost** and accessible via **SSH tunnel only** by default for security.
 

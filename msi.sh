@@ -245,7 +245,7 @@ chmod 0644 "/home/$tunnel_user/motd"
 if ! grep -q "Match User $tunnel_user" /etc/ssh/sshd_config; then
   cat << EOF >> /etc/ssh/sshd_config
 Match User $tunnel_user
-  PermitOpen 127.0.0.1:6767 127.0.0.1:7878 127.0.0.1:8080 127.0.0.1:8989 127.0.0.1:9696
+  PermitOpen 127.0.0.1:6767 127.0.0.1:7878 127.0.0.1:8080 127.0.0.1:8989 127.0.0.1:9696 127.0.0.1:5800
   X11Forwarding no
   AllowAgentForwarding no
   ForceCommand /bin/false
@@ -284,8 +284,9 @@ PUID=$(id -u "$docker_user")
 PGID=$(id -g "$docker_user")
 
 mkdir -p "$SRV_DIR"
-mkdir -p "$CONTAINER_DIR"/{prowlarr,sonarr,radarr,bazarr,qbittorrent,jellyfin}/config \
-         "$LIBRARY_DIR"/{movies,shows,downloads}
+mkdir -p "$CONTAINER_DIR"/{prowlarr,sonarr,radarr,bazarr,qbittorrent,jdownloader-2,jellyfin}/config \
+         "$LIBRARY_DIR"/{movies,shows} \
+         "$LIBRARY_DIR"/downloads/jdownloader-2
 
 chown -R "$docker_user:$docker_user" "$SRV_DIR"
 chmod -R 755 "$SRV_DIR"
@@ -379,6 +380,24 @@ services:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
 
+  # isolated admin-only services
+
+  jdownloader-2:
+    image: jlesage/jdownloader-2
+    container_name: jdownloader-2
+    environment:
+      - "USER_ID=${PUID}"
+      - "GROUP_ID=${PGID}"
+      - "TZ=${USER_TZ}"
+    volumes:
+      - ./jdownloader-2/config:/config
+      - "${LIBRARY_DIR}/downloads/jdownloader-2:/output:rw"
+    networks:
+      - jd_network
+    ports:
+      - "127.0.0.1:5800:5800"
+    restart: unless-stopped
+
   # user services
 
   jellyfin:
@@ -405,6 +424,8 @@ services:
 
 networks:
   media_network:
+    driver: bridge
+  jd_network:
     driver: bridge
 EOF
 
@@ -435,6 +456,7 @@ ssh -N \\
   -L 127.0.0.1:8989:127.0.0.1:8989 \\
   -L 127.0.0.1:9696:127.0.0.1:9696 \\
   -L 127.0.0.1:8080:127.0.0.1:8080 \\
+  -L 127.0.0.1:5800:127.0.0.1:5800 \\
   $tunnel_user@your-server-ip
 
 Use 'sudo msi-update' command for updates.

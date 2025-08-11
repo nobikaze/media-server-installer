@@ -94,7 +94,7 @@ All services except **Jellyfin** are **bound to localhost** and accessible via *
 - Run only on clean or properly configured systems.
 - Ensure enough disk space is available for media and containers.
 - Script requires root privileges.
-- **Jellyfin is configured for Direct Play only** — transcoding is not supported in this setup. It's recommended to disable transcoding in the Jellyfin server settings to reduce CPU usage and save electricity.
+- **Jellyfin is configured for Direct Play only** — transcoding isn’t supported in this setup. It's recommended to disable transcoding in the server settings to lighten the load on your CPU, cut down on power use, and be a bit kinder to the planet.
 - **Launching containers may take time, especially on first run,** depending on your internet connection speed.
 
 ## 📜 License

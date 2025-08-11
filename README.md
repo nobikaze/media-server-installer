@@ -1,6 +1,6 @@
 # msi.sh — Media Server Installer
 
-```
+<pre style="color:#00FFFF;">
                             ░██               ░██
                                               ░██
  ░█████████████   ░███████  ░██     ░███████  ░████████
@@ -8,7 +8,7 @@
  ░██   ░██   ░██  ░███████  ░██     ░███████  ░██    ░██
  ░██   ░██   ░██        ░██ ░██           ░██ ░██    ░██
  ░██   ░██   ░██  ░███████  ░██░██  ░███████  ░██    ░██
-```
+</pre>
 
 Automated installer script for setting up a self-hosted media server using **Docker** and services like **Jellyfin**, **Sonarr**, **Radarr**, **Prowlarr**, **Bazarr**, and **qBittorrent**.
 

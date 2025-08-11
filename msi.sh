@@ -8,6 +8,11 @@
 # MIT LICENSE
 # ─────────────────────────────────────────────────────────────
 
+# Fail fast and be strict in scripts. This makes errors visible and avoids
+# many classes of subtle bugs (undefined variables, silent failures).
+set -euo pipefail
+IFS=$'\n\t'
+
 # ─── Color Codes ──────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'

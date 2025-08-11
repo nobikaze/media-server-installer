@@ -409,8 +409,8 @@ print_success "Compose file ready"
 # ─── Launch Services ────────────────────────────────────────
 
 print_status "Launching containers"
-docker compose -f "$CONTAINER_DIR/docker-compose.yml" pull &>/dev/null || abort "Docker Compose failed"
-docker compose -f "$CONTAINER_DIR/docker-compose.yml" up -d --remove-orphans &>/dev/null || abort "Docker Compose failed"
+docker compose -f "$CONTAINER_DIR/docker-compose.yml" pull &>/dev/null || abort "Docker Compose failed to pull images"
+docker compose -f "$CONTAINER_DIR/docker-compose.yml" up -d --remove-orphans &>/dev/null || abort "Docker Compose failed to launch containers"
 print_success "Media stack up"
 
 # ─── MSI Update Script ──────────────────────────────────────

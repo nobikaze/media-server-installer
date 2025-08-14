@@ -41,26 +41,53 @@ Whether you're deploying this on your LAN, cloud VM, or homelab node, `msi.sh` g
 
 ## 🚀 Getting Started
 
-1. Download the script:
+### 📥 Recommended Method — Install from Latest Release
+
+1. Download the **latest** `.zip` from the [GitHub Releases page](https://github.com/nobikaze/media-server-installer/releases).
+
+2. Extract the archive:
    ```bash
-   git clone https://github.com/nobikaze/media-server-installer.git
-   cd msi.sh
-   chmod +x msi.sh
+   unzip media-server-installer-*.zip
+   cd media-server-installer
    ```
 
-2. Run as root:
+3. Make the script executable:
+
+   ```bash
+   chmod +x msi.sh
+   ```
+4. Run as root:
+
    ```bash
    sudo ./msi.sh
    ```
 
-3. Follow the prompts to configure:
+### 🛠 Alternative Method (Advanced) — Install from Git Repository
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/nobikaze/media-server-installer.git
+   cd media-server-installer
+   chmod +x msi.sh
+   ```
+
+2. Run as root:
+
+   ```bash
+   sudo ./msi.sh
+   ```
+
+### 🏃 Follow the Prompts
+
+- Follow the prompts to configure:
    - CIDR allowed IPs
    - Docker user
    - Timezone
    - SSH tunnel user credentials
    - MOTD location
 
-4. When complete, use the printed SSH tunnel command to access services securely.
+- When complete, use the printed SSH tunnel command to access services securely.
 
 ## 🔁 Maintenance
 

@@ -152,15 +152,25 @@ if [[ -f "$LAST_RUN_FILE" ]]; then
     DIFF_SEC=$((NOW_EPOCH - LAST_RUN_EPOCH))
 
     if (( DIFF_SEC < 60 )); then
-        DELTA="$DIFF_SEC seconds ago"
+        VALUE=$DIFF_SEC
+        UNIT="second"
     elif (( DIFF_SEC < 3600 )); then
-        DELTA="$((DIFF_SEC / 60)) minutes ago"
+        VALUE=$((DIFF_SEC / 60))
+        UNIT="minute"
     elif (( DIFF_SEC < 86400 )); then
-        DELTA="$((DIFF_SEC / 3600)) hours ago"
+        VALUE=$((DIFF_SEC / 3600))
+        UNIT="hour"
     else
-        DELTA="$((DIFF_SEC / 86400)) days ago"
+        VALUE=$((DIFF_SEC / 86400))
+        UNIT="day"
     fi
 
+    # Pluralize if needed
+    if (( VALUE != 1 )); then
+        UNIT="${UNIT}s"
+    fi
+
+    DELTA="$VALUE $UNIT ago"
     print_success "Last run: $LAST_RUN ($DELTA)"
 else
     print_success "No previous run recorded"

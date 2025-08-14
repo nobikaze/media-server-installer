@@ -30,27 +30,32 @@ start_spinner() {
 
   (
     while true; do
-      for i in $(seq 0 3); do
+      for ((i=0; i<${#spinstr}; i++)); do
         echo -ne "\r\t${YELLOW}[${spinstr:$i:1}]${NC} $message"
-        sleep $delay
+        sleep "$delay"
       done
     done
   ) &
   spinner_pid=$!
-  disown
 }
 
 stop_spinner() {
   local exit_code=$1
   local message="$2"
 
-  kill "$spinner_pid" &>/dev/null
-  wait "$spinner_pid" 2>/dev/null
+  if [[ -n "$spinner_pid" ]]; then
+    kill "$spinner_pid" &>/dev/null
+    wait "$spinner_pid" 2>/dev/null
+    spinner_pid=""
+  fi
+
+  # Clear spinner line before printing final status
+  echo -ne "\r\033[K"
 
   if [ "$exit_code" -eq 0 ]; then
-    echo -e "\r\t${GREEN}[x]${NC} $message"
+    echo -e "\t${GREEN}[x]${NC} $message"
   else
-    echo -e "\r\t${RED}[!]${NC} $message"
+    echo -e "\t${RED}[!]${NC} $message"
     exit "$exit_code"
   fi
 }

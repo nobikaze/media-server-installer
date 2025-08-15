@@ -1,5 +1,13 @@
 # msi.sh — Media Server Installer
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/nobikaze/media-server-installer?color=blue&label=Release)](https://github.com/nobikaze/media-server-installer/releases)
+[![GitHub stars](https://img.shields.io/github/stars/nobikaze/media-server-installer?color=yellow)](https://github.com/nobikaze/media-server-installer/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/nobikaze/media-server-installer?color=orange)](https://github.com/nobikaze/media-server-installer/issues)
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker&logoColor=white)](https://www.docker.com/)
+[![Made for Linux](https://img.shields.io/badge/OS-Linux-darkgreen?logo=linux&logoColor=white)](#)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/nobikaze/media-server-installer/pulls)
+
 <pre style="color:#00FFFF;">
                             ░██               ░██
                                               ░██

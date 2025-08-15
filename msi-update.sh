@@ -55,7 +55,7 @@ stop_spinner() {
 
   if [[ -n "$spinner_pid" ]]; then
     kill "$spinner_pid" &>/dev/null
-    wait "$spinner_pid" 2>/dev/null
+    wait "$spinner_pid" 2>/dev/null || true
     spinner_pid=""
   fi
 

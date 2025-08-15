@@ -39,6 +39,12 @@ A typical use case might look like:
 
 Whether you're deploying this on your LAN, cloud VM, or homelab node, `msi.sh` gives you a reliable, secure, and reproducible media server setup in minutes.
 
+## 📋 Prerequisites
+- Linux (Debian 11+, Ubuntu 20.04+, or compatible)
+- Root access
+- At least 2GB RAM and 20GB free storage
+- Internet connection
+
 ## 🚀 Getting Started
 
 ### 📥 Recommended Method — Install from Latest Release

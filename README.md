@@ -131,6 +131,10 @@ All services except **Jellyfin** are **bound to localhost** and accessible via *
 - **Jellyfin is configured for Direct Play only** — transcoding isn’t supported in this setup. It's recommended to disable transcoding in the server settings to lighten the load on your CPU, cut down on power use, and be a bit kinder to the planet.
 - **Launching containers may take time, especially on first run,** depending on your internet connection speed.
 
+## 🐛 Troubleshooting
+- **Port already in use:** Edit `docker-compose.yml` and change the conflicting port.
+- **Docker permission denied:** Ensure your user is in the `docker` group or run with `sudo`.
+
 ## 📜 License
 
 MIT License

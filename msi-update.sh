@@ -70,6 +70,9 @@ stop_spinner() {
   fi
 }
 
+# Clean up spinner if script exits or is interrupted
+trap '[[ -n "$spinner_pid" ]] && kill "$spinner_pid" &>/dev/null' EXIT
+
 # ─── Functions ───────────────────────────────────────────────
 
 print_status()   { start_spinner "$1"; }

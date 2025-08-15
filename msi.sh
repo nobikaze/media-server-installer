@@ -121,10 +121,10 @@ echo ""
 # ─── System Checks ──────────────────────────────────────────
 
 for cmd in apt curl openssl; do
-    print_status "Checking $cmd"
-    require_command "$cmd"
-    pause
-    print_success "$cmd is installed"
+  print_status "Checking $cmd"
+  require_command "$cmd"
+  pause
+  print_success "$cmd is installed"
 done
 
 if ! openssl passwd -6 test &>/dev/null; then

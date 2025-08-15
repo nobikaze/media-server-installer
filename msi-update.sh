@@ -123,10 +123,10 @@ LAST_RUN_FILE="/var/log/media-maintenance-last-run.log"
 # ─── System Checks ───────────────────────────────────────────
 
 for cmd in apt docker; do
-    print_status "Checking $cmd"
-    require_command "$cmd"
-    pause
-    print_success "$cmd is installed"
+  print_status "Checking $cmd"
+  require_command "$cmd"
+  pause
+  print_success "$cmd is installed"
 done
 
 print_status "Checking Docker service"

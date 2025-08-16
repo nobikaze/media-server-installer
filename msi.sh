@@ -623,7 +623,123 @@ check_system_requirements() {
     print_success "System requirements met"
 }
 
-# ─── Configuration Management ─────────────────────────────────
+# ─── Configuration Validation ─────────────────────────────────
+
+# Configuration schema
+declare -A CONFIG_SCHEMA=(
+    ["cidr"]="required|cidr"
+    ["docker_user"]="required|existing_user"
+    ["USER_TZ"]="required|timezone"
+    ["tunnel_user"]="required|valid_username"
+    ["tunnel_pass"]="required|min:6"
+    ["motd_path"]="optional|file_path"
+)
+
+# Configuration constraints
+readonly MIN_MEMORY_MB=2048
+readonly MIN_DISK_GB=20
+readonly REQUIRED_PORTS=(8096 6767 7878 8080 8989 9696 5800)
+
+validate_config_schema() {
+    local key="$1"
+    local value="$2"
+    local rules="${CONFIG_SCHEMA[$key]}"
+    local IFS='|'
+    local result=0
+
+    debug "Validating $key=$value against rules: $rules"
+
+    for rule in $rules; do
+        case "$rule" in
+            "required")
+                if [[ -z "$value" ]]; then
+                    error "Configuration error: $key is required"
+                    return 1
+                fi
+                ;;
+            "optional")
+                [[ -z "$value" ]] && return 0
+                ;;
+            "cidr")
+                if ! validate_cidr "$value"; then
+                    error "Configuration error: $key must be a valid CIDR notation"
+                    return 1
+                fi
+                ;;
+            "existing_user")
+                if ! id "$value" &>/dev/null; then
+                    error "Configuration error: User $value does not exist"
+                    return 1
+                fi
+                ;;
+            "timezone")
+                if ! validate_timezone "$value"; then
+                    error "Configuration error: Invalid timezone $value"
+                    return 1
+                fi
+                ;;
+            "valid_username")
+                if ! validate_username "$value"; then
+                    error "Configuration error: Invalid username format for $value"
+                    return 1
+                fi
+                ;;
+            min:*)
+                local min_length="${rule#min:}"
+                if [[ ${#value} -lt $min_length ]]; then
+                    error "Configuration error: $key must be at least $min_length characters"
+                    return 1
+                fi
+                ;;
+            "file_path")
+                if [[ -n "$value" && ! -e "$(dirname "$value")" ]]; then
+                    error "Configuration error: Directory for $value does not exist"
+                    return 1
+                fi
+                ;;
+        esac
+    done
+
+    return $result
+}
+
+validate_system_requirements() {
+    local result=0
+
+    # Check memory
+    local total_memory
+    total_memory=$(awk '/MemTotal/ {print $2/1024}' /proc/meminfo)
+    if [[ ${total_memory%.*} -lt $MIN_MEMORY_MB ]]; then
+        error "Insufficient memory: ${total_memory%.*}MB (minimum ${MIN_MEMORY_MB}MB required)"
+        result=1
+    fi
+
+    # Check disk space
+    local available_space
+    available_space=$(df -BG "$BASE_DIR" | awk 'NR==2 {print $4}' | tr -d 'G')
+    if [[ $available_space -lt $MIN_DISK_GB ]]; then
+        error "Insufficient disk space: ${available_space}GB (minimum ${MIN_DISK_GB}GB required)"
+        result=1
+    fi
+
+    # Check port availability
+    for port in "${REQUIRED_PORTS[@]}"; do
+        if netstat -tuln | grep -q ":$port "; then
+            error "Port $port is already in use"
+            result=1
+        fi
+    done
+
+    # Check Docker configuration
+    if command -v docker &>/dev/null; then
+        if ! docker info &>/dev/null; then
+            error "Docker daemon is not running or not accessible"
+            result=1
+        fi
+    fi
+
+    return $result
+}
 
 # Configuration defaults
 declare -A DEFAULT_CONFIG=(
@@ -654,24 +770,78 @@ save_config() {
 
 load_config() {
     local config_file="/etc/msi/config"
+    local validation_errors=0
+
+    # First, load defaults
+    for key in "${!DEFAULT_CONFIG[@]}"; do
+        config["$key"]="${DEFAULT_CONFIG[$key]}"
+    done
 
     if [[ -f "$config_file" ]]; then
         debug "Loading configuration from $config_file"
+
+        # Validate file permissions
+        if [[ $(stat -c %a "$config_file") != "600" ]]; then
+            warn "Configuration file has unsafe permissions"
+            chmod 600 "$config_file" || {
+                error "Failed to set secure permissions on config file"
+                return 1
+            }
+        }
+
+        # Parse and validate configuration
         while IFS='=' read -r key value; do
+            # Skip comments and empty lines
             [[ $key =~ ^#.*$ ]] && continue
             [[ -z $key ]] && continue
+
+            # Trim whitespace
+            key=$(echo "$key" | xargs)
+            value=$(echo "$value" | xargs)
+
+            # Validate against schema if exists
+            if [[ -n "${CONFIG_SCHEMA[$key]:-}" ]]; then
+                if ! validate_config_schema "$key" "$value"; then
+                    error "Invalid configuration value for $key: $value"
+                    ((validation_errors++))
+                    continue
+                fi
+            else
+                warn "Unknown configuration key: $key"
+            fi
+
             config["$key"]="$value"
         done < "$config_file"
     else
-        debug "No existing configuration found"
-        # Load defaults
-        for key in "${!DEFAULT_CONFIG[@]}"; do
-            config["$key"]="${DEFAULT_CONFIG[$key]}"
-        done
+        debug "No existing configuration found, using defaults"
     fi
-}
 
-# ─── Input Validation Functions ──────────────────────────────
+    # Validate all required configurations are present
+    for key in "${!CONFIG_SCHEMA[@]}"; do
+        local rules="${CONFIG_SCHEMA[$key]}"
+        if [[ $rules == *"required"* && -z "${config[$key]:-}" ]]; then
+            error "Missing required configuration: $key"
+            ((validation_errors++))
+        fi
+    fi
+
+    # Perform system requirement validation
+    if ! validate_system_requirements; then
+        ((validation_errors++))
+    fi
+
+    # If there were validation errors, prompt for fix
+    if [[ $validation_errors -gt 0 ]]; then
+        error "$validation_errors configuration validation error(s) found"
+        if [[ -z "${UNATTENDED:-}" ]]; then
+            read -r -p "Would you like to reconfigure? [Y/n] " response
+            [[ ${response,,} =~ ^(yes|y|)$ ]] && return 2
+        fi
+        return 1
+    fi
+
+    return 0
+}# ─── Input Validation Functions ──────────────────────────────
 
 validate_cidr() {
     local cidr="$1"
@@ -858,6 +1028,69 @@ pause
 systemctl restart ssh || systemctl restart sshd
 
 print_success "OpenSSH server configured"
+
+# ─── Docker Configuration Validation ────────────────────────
+
+validate_docker_config() {
+    local result=0
+
+    # Check Docker daemon configuration
+    if [[ -f "/etc/docker/daemon.json" ]]; then
+        if ! jq empty "/etc/docker/daemon.json" 2>/dev/null; then
+            error "Invalid Docker daemon configuration file"
+            result=1
+        fi
+    fi
+
+    # Validate Docker network configuration
+    if docker network ls &>/dev/null; then
+        for network in "media_network" "jd_network"; do
+            if docker network inspect "$network" &>/dev/null; then
+                if ! docker network inspect "$network" | grep -q "\"Driver\": \"bridge\""; then
+                    error "Network $network exists but is not a bridge network"
+                    result=1
+                fi
+            fi
+        done
+    else
+        error "Unable to inspect Docker networks"
+        result=1
+    fi
+
+    # Check Docker storage driver
+    local storage_driver
+    storage_driver=$(docker info --format '{{.Driver}}' 2>/dev/null)
+    case "$storage_driver" in
+        overlay2|overlay)
+            debug "Using recommended storage driver: $storage_driver"
+            ;;
+        *)
+            warn "Using non-standard storage driver: $storage_driver"
+            ;;
+    esac
+
+    # Validate Docker compose file
+    if [[ -f "$DOCKER_COMPOSE_FILE" ]]; then
+        if ! docker compose -f "$DOCKER_COMPOSE_FILE" config --quiet 2>/dev/null; then
+            error "Invalid Docker compose configuration"
+            result=1
+        fi
+    fi
+
+    # Check available volume space
+    local docker_root
+    docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)
+    if [[ -n "$docker_root" ]]; then
+        local available_space
+        available_space=$(df -BG "$docker_root" | awk 'NR==2 {print $4}' | tr -d 'G')
+        if [[ $available_space -lt $MIN_DISK_GB ]]; then
+            error "Insufficient space in Docker root directory: ${available_space}GB (minimum ${MIN_DISK_GB}GB required)"
+            result=1
+        fi
+    fi
+
+    return $result
+}
 
 # ─── Docker Functions ────────────────────────────────────────
 

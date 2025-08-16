@@ -4,19 +4,20 @@ set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${RED}WARNING: This will REMOVE all media server containers, config, users, and firewall rules installed by msi.sh!${NC}"
+echo -e "${RED}WARNING: This will REMOVE all media server containers, config, users, firewall rules, and packages installed by msi.sh!${NC}"
 read -p "Are you sure you want to continue? (y/N): " confirm
 [[ "$confirm" == "y" || "$confirm" == "Y" ]] || exit 1
 
-# Stop and remove containers
+# Stop and remove containers and volumes
 if [ -f /srv/media/containers/docker-compose.yml ]; then
-    echo "Stopping and removing containers..."
+    echo "Stopping and removing containers and volumes..."
     docker compose -f /srv/media/containers/docker-compose.yml down --volumes --remove-orphans
 fi
 
-# Remove Docker images (optional, only those used by the stack)
+# Remove Docker images
 echo "Removing related Docker images..."
 docker image rm jellyfin/jellyfin:latest \
     lscr.io/linuxserver/sonarr:latest \
@@ -34,12 +35,24 @@ rm -rf /srv/media
 echo "Removing msi-update command..."
 rm -f /usr/local/bin/msi-update
 
-# Remove UFW rules
+# Remove last run log
+rm -f /var/log/media-maintenance-last-run.log
+
+# Remove UFW Jellyfin app and rules
 echo "Removing UFW Jellyfin app and rules..."
 rm -f /etc/ufw/applications.d/jellyfin
-ufw reload
+ufw delete allow 8096/tcp || true
+ufw reload || true
 
-# Remove SSH tunnel user (prompt for confirmation)
+# Optionally disable UFW if it was enabled by the installer
+if ufw status | grep -q "Status: active"; then
+    read -p "Disable UFW firewall? (y/N): " disable_ufw
+    if [[ "$disable_ufw" == "y" || "$disable_ufw" == "Y" ]]; then
+        ufw disable
+    fi
+fi
+
+# Remove SSH tunnel user and SSH config block
 read -p "Remove SSH tunnel user created by installer? (y/N): " deluser
 if [[ "$deluser" == "y" || "$deluser" == "Y" ]]; then
     read -p "Enter tunnel username to remove: " tunnel_user
@@ -49,8 +62,17 @@ if [[ "$deluser" == "y" || "$deluser" == "Y" ]]; then
     systemctl restart ssh || systemctl restart sshd
 fi
 
-# Remove last run log
-rm -f /var/log/media-maintenance-last-run.log
+# Remove Docker repository and GPG key
+echo "Removing Docker repository and GPG key..."
+rm -f /etc/apt/sources.list.d/docker.list
+rm -f /etc/apt/keyrings/docker.asc
+
+# Optionally uninstall Docker, UFW, and OpenSSH
+read -p "Uninstall Docker, UFW, and OpenSSH packages? (y/N): " remove_pkgs
+if [[ "$remove_pkgs" == "y" || "$remove_pkgs" == "Y" ]]; then
+    apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin ufw openssh-server
+    apt-get autoremove -y
+fi
 
 echo -e "${GREEN}Uninstall complete. System cleaned up.${NC}"
 exit 0

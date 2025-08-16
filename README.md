@@ -143,6 +143,17 @@ All services except **Jellyfin** are **bound to localhost** and accessible via *
 - **Port already in use:** Edit `docker-compose.yml` and change the conflicting port.
 - **Docker permission denied:** Ensure your user is in the `docker` group or run with `sudo`.
 
+## 🧹 Uninstalling
+
+To completely remove all containers, configuration, users, firewall rules, and packages installed by `msi.sh`, use the uninstall script:
+
+```bash
+chmod +x msi-uninstall.sh
+sudo ./msi-uninstall.sh
+```
+
+The script will prompt for confirmation before removing users, disabling the firewall, and uninstalling packages. Follow the prompts to clean up your system.
+
 ## 📜 License
 
 MIT License

@@ -147,6 +147,8 @@ All services except **Jellyfin** are **bound to localhost** and accessible via *
 
 To completely remove all containers, configuration, users, firewall rules, and packages installed by `msi.sh`, use the uninstall script:
 
+> **Note:** For the cleanest recovery, it is highly recommended to create a system snapshot or backup before running these scripts. Restoring from a snapshot is often simpler and more reliable than manual uninstallation.
+
 ```bash
 chmod +x msi-uninstall.sh
 sudo ./msi-uninstall.sh

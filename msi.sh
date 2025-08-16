@@ -61,7 +61,7 @@ stop_spinner() {
 }
 
 # Clean up spinner if script exits or is interrupted
-trap '[[ -n "$spinner_pid" ]] && kill "$spinner_pid" &>/dev/null' EXIT
+trap 'if [[ -n "${spinner_pid:-}" ]]; then kill "${spinner_pid}" &>/dev/null || true; wait "${spinner_pid}" 2>/dev/null || true; spinner_pid=""; fi' EXIT
 
 # ─── Functions ───────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ echo ""
 
 # ─── System Checks ──────────────────────────────────────────
 
-for cmd in apt curl openssl; do
+for cmd in apt curl openssl awk id useradd systemctl; do
   print_status "Checking $cmd"
   require_command "$cmd"
   pause

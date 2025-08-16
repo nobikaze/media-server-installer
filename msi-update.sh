@@ -1,11 +1,16 @@
 #!/bin/bash
 
+# Enable stricter bash settings
+set -euo pipefail
+IFS=$'\n\t'
+
 # Check if running on a supported system
 if [ ! -f /etc/os-release ]; then
     echo "This script requires a system with /etc/os-release"
     exit 1
 fi
 
+# Source OS release info
 . /etc/os-release
 if [[ ! "$ID" =~ ^(debian|ubuntu)$ ]]; then
     echo "This script is only supported on Debian/Ubuntu systems"
@@ -94,7 +99,7 @@ stop_spinner() {
 }
 
 # Clean up spinner if script exits or is interrupted
-trap '[[ -n "$spinner_pid" ]] && kill "$spinner_pid" &>/dev/null' EXIT
+trap 'if [[ -n "${spinner_pid:-}" ]]; then kill "${spinner_pid}" &>/dev/null || true; wait "${spinner_pid}" 2>/dev/null || true; spinner_pid=""; fi' EXIT
 
 # ─── Functions ───────────────────────────────────────────────
 
@@ -143,8 +148,15 @@ echo ""
 
 # ─── Variables ───────────────────────────────────────────────
 
-CONTAINERS_DIR="/srv/media/containers"
-LAST_RUN_FILE="/var/log/media-maintenance-last-run.log"
+# Define critical paths
+readonly CONTAINERS_DIR="/srv/media/containers"
+readonly DOCKER_COMPOSE_FILE="${CONTAINERS_DIR}/docker-compose.yml"
+readonly LAST_RUN_FILE="/var/log/media-maintenance-last-run.log"
+
+# Ensure required paths exist
+if [[ ! -d "${CONTAINERS_DIR}" ]]; then
+    abort "Container directory ${CONTAINERS_DIR} does not exist"
+fi
 
 # ─── System Checks ───────────────────────────────────────────
 
@@ -223,35 +235,56 @@ print_success "Unnecessary packages removed"
 DOCKER_COMPOSE_FILE="$CONTAINERS_DIR/docker-compose.yml"
 
 print_status "Checking docker-compose.yml"
-if [[ ! -f "$DOCKER_COMPOSE_FILE" ]]; then
-    abort "docker-compose.yml not found at $DOCKER_COMPOSE_FILE"
+if [[ ! -f "${DOCKER_COMPOSE_FILE}" ]]; then
+    abort "docker-compose.yml not found at ${DOCKER_COMPOSE_FILE}"
+fi
+
+# Validate docker-compose file
+if ! docker compose -f "${DOCKER_COMPOSE_FILE}" config --quiet &>/dev/null; then
+    abort "Invalid docker-compose.yml configuration"
 fi
 pause
-print_success "docker-compose.yml exists"
+print_success "docker-compose.yml exists and is valid"
 
 print_status "Pulling latest Docker images"
-docker compose -f "$DOCKER_COMPOSE_FILE" pull &>/dev/null || abort "Docker Compose failed"
+if ! docker compose -f "${DOCKER_COMPOSE_FILE}" pull &>/dev/null; then
+    abort "Failed to pull latest Docker images"
+fi
 print_success "Latest Docker images pulled"
 
 print_status "Recreating containers with latest images"
-docker compose -f "$DOCKER_COMPOSE_FILE" up -d --remove-orphans &>/dev/null || abort "Docker Compose failed"
+if ! docker compose -f "${DOCKER_COMPOSE_FILE}" up -d --remove-orphans &>/dev/null; then
+    abort "Failed to recreate containers"
+fi
 print_success "Containers with latest images have been recreated"
 
 print_status "Pruning unused Docker images"
-docker image prune -f &>/dev/null || abort "Docker Compose failed"
+if ! docker image prune -f &>/dev/null; then
+    abort "Failed to prune unused Docker images"
+fi
 print_success "Unused Docker images have been pruned"
 
 # ─── Final Info ─────────────────────────────────────────────
 
 echo "Docker system maintenance completed successfully."
 
-if [[ ! -f "$LAST_RUN_FILE" ]]; then
-    touch "$LAST_RUN_FILE"
-    chown root:root "$LAST_RUN_FILE"
-    chmod 644 "$LAST_RUN_FILE"
-fi
-
-date '+%Y-%m-%d %H:%M:%S' > "$LAST_RUN_FILE"
+# Update last run timestamp with proper permissions
+(
+    umask 022
+    if ! date '+%Y-%m-%d %H:%M:%S' > "${LAST_RUN_FILE}.tmp"; then
+        abort "Failed to write timestamp"
+    fi
+    if ! mv "${LAST_RUN_FILE}.tmp" "${LAST_RUN_FILE}"; then
+        rm -f "${LAST_RUN_FILE}.tmp"
+        abort "Failed to update last run file"
+    fi
+    if ! chown root:root "${LAST_RUN_FILE}"; then
+        abort "Failed to set ownership of last run file"
+    fi
+    if ! chmod 644 "${LAST_RUN_FILE}"; then
+        abort "Failed to set permissions of last run file"
+    fi
+)
 
 pause
 

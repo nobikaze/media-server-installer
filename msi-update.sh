@@ -400,6 +400,121 @@ print_status "Removing unnecessary packages"
 apt autoremove --purge -y &>/dev/null
 print_success "Unnecessary packages removed"
 
+# ─── Resource Cleanup ───────────────────────────────────────
+
+# Resource limits and thresholds
+readonly MAX_LOG_SIZE_MB=500
+readonly MAX_BACKUP_AGE_DAYS=30
+readonly MIN_FREE_SPACE_PERCENT=15
+readonly MAX_DOCKER_CACHE_GB=10
+
+cleanup_system_resources() {
+    local result=0
+    print_status "Performing system resource cleanup"
+
+    # Clean up old log files
+    find /var/log -type f -name "*.gz" -o -name "*.old" -mtime +7 -delete 2>/dev/null || warn "Failed to clean old logs"
+
+    # Rotate large log files
+    find /var/log -type f -size +100M | while read -r log_file; do
+        if [[ -w "$log_file" ]]; then
+            savelog -n -c 5 "$log_file" 2>/dev/null || warn "Failed to rotate $log_file"
+        fi
+    done
+
+    # Clean up old backups
+    local backup_path="/srv/media/containers/jellyfin/config"
+    if [[ -d "$backup_path" ]]; then
+        find "$backup_path" -name "backup_*.tar.gz" -mtime +${MAX_BACKUP_AGE_DAYS} -delete 2>/dev/null ||
+            warn "Failed to clean old backups"
+    fi
+
+    # Clean up Docker resources
+    cleanup_docker_resources || ((result++))
+
+    # Clean up temporary files
+    cleanup_temp_files || ((result++))
+
+    # Clean up journald logs
+    if command -v journalctl &>/dev/null; then
+        journalctl --vacuum-time=7d --vacuum-size=1G &>/dev/null ||
+            warn "Failed to clean journald logs"
+    fi
+
+    return $result
+}
+
+cleanup_docker_resources() {
+    print_status "Cleaning Docker resources"
+    local result=0
+
+    # Remove unused containers
+    docker container prune -f --filter "until=168h" &>/dev/null || ((result++))
+
+    # Remove unused volumes
+    docker volume prune -f --filter "all=true" &>/dev/null || ((result++))
+
+    # Remove old images (keep last 2 versions)
+    local images
+    images=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -v "<none>" || true)
+    if [[ -n "$images" ]]; then
+        echo "$images" | while read -r image; do
+            local count
+            count=$(docker images "$image" --format "{{.ID}}" | wc -l)
+            if [[ $count -gt 2 ]]; then
+                docker images "$image" --format "{{.ID}}" | tail -n +3 |
+                    xargs -r docker rmi &>/dev/null || warn "Failed to remove old images for $image"
+            fi
+        done
+    fi
+
+    # Clean up build cache
+    docker builder prune -f --keep-storage "${MAX_DOCKER_CACHE_GB}gb" &>/dev/null || ((result++))
+
+    # Remove orphaned volumes
+    docker volume ls -qf dangling=true | xargs -r docker volume rm &>/dev/null || ((result++))
+
+    return $result
+}
+
+cleanup_temp_files() {
+    print_status "Cleaning temporary files"
+    local result=0
+
+    # Clean /tmp files older than 7 days
+    find /tmp -type f -atime +7 -delete 2>/dev/null || ((result++))
+
+    # Clean empty directories in /tmp
+    find /tmp -type d -empty -delete 2>/dev/null || true
+
+    # Clean package manager cache
+    if command -v apt-get &>/dev/null; then
+        apt-get clean &>/dev/null || ((result++))
+        apt-get autoremove -y &>/dev/null || ((result++))
+    fi
+
+    return $result
+}
+
+monitor_disk_usage() {
+    local path="$1"
+    local usage
+    usage=$(df -h "$path" | awk 'NR==2 {print $5}' | tr -d '%')
+
+    if [[ $usage -gt $((100 - MIN_FREE_SPACE_PERCENT)) ]]; then
+        warn "Low disk space on $path: $usage% used"
+        cleanup_system_resources
+
+        # Check if cleanup helped
+        usage=$(df -h "$path" | awk 'NR==2 {print $5}' | tr -d '%')
+        if [[ $usage -gt $((100 - MIN_FREE_SPACE_PERCENT)) ]]; then
+            error "Disk space is still critically low after cleanup"
+            return 1
+        fi
+    fi
+    return 0
+}
+
 # ─── Docker Operations ──────────────────────────────────────
 
 readonly MAX_RETRIES=3
@@ -489,6 +604,20 @@ fi
 pause
 print_success "docker-compose.yml exists and is valid"
 
+# Check disk space and perform cleanup if needed
+monitor_disk_usage "$CONTAINERS_DIR" || {
+    if [[ -z "${FORCE_UPDATE:-}" ]]; then
+        abort "Critical disk space issue. Clean up disk space or use FORCE_UPDATE=1 to override."
+    else
+        warn "Proceeding with low disk space (FORCE_UPDATE is set)"
+    fi
+}
+
+# Perform initial resource cleanup
+print_status "Performing initial resource cleanup"
+cleanup_system_resources
+print_success "Initial cleanup completed"
+
 # Perform system health check
 if ! check_system_health; then
     if [[ -z "${FORCE_UPDATE:-}" ]]; then
@@ -524,6 +653,22 @@ sleep 10  # Give services time to initialize
 if ! check_system_health; then
     warn "Post-update health check shows issues"
 fi
+
+# Perform final cleanup
+print_status "Performing post-update cleanup"
+
+# Remove old backups keeping only the last 5
+find "$CONTAINERS_DIR" -name "backup_*.tar.gz" -type f | sort -r | tail -n +6 | xargs -r rm 2>/dev/null ||
+    warn "Failed to clean old backups"
+
+# Final resource cleanup
+cleanup_system_resources
+
+# Report final disk usage
+print_status "Checking final disk usage"
+df -h "$CONTAINERS_DIR" | awk 'NR==2 {printf "Final disk usage: %s of %s (%s used)\n", $3, $2, $5}' || true
+
+print_success "Post-update cleanup completed"
 
 # ─── Final Info ─────────────────────────────────────────────
 

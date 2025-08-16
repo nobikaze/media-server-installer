@@ -87,6 +87,52 @@ done
 set -euo pipefail
 IFS=$'\n\t'
 
+# ─── Transaction Management ─────────────────────────────────
+readonly TRANSACTION_LOG="/var/log/msi/transactions.log"
+declare -i TRANSACTION_ID
+declare -A TRANSACTION_STEPS=()
+declare CURRENT_STEP=""
+
+begin_transaction() {
+    local description="$1"
+    TRANSACTION_ID=$(date +%s)
+    mkdir -p "$(dirname "$TRANSACTION_LOG")"
+    echo "BEGIN TRANSACTION $TRANSACTION_ID: $description" >> "$TRANSACTION_LOG"
+    debug "Started transaction $TRANSACTION_ID: $description"
+}
+
+commit_transaction() {
+    echo "COMMIT TRANSACTION $TRANSACTION_ID" >> "$TRANSACTION_LOG"
+    debug "Committed transaction $TRANSACTION_ID"
+    TRANSACTION_ID=0
+    TRANSACTION_STEPS=()
+}
+
+rollback_transaction() {
+    local reason="$1"
+    echo "ROLLBACK TRANSACTION $TRANSACTION_ID: $reason" >> "$TRANSACTION_LOG"
+    error "Rolling back transaction $TRANSACTION_ID: $reason"
+
+    # Execute registered rollback commands
+    execute_rollback "Transaction rollback: $reason"
+
+    TRANSACTION_ID=0
+    TRANSACTION_STEPS=()
+}
+
+add_step() {
+    local step="$1"
+    local rollback_cmd="$2"
+
+    CURRENT_STEP="$step"
+    TRANSACTION_STEPS["$step"]=1
+    echo "STEP $TRANSACTION_ID: $step" >> "$TRANSACTION_LOG"
+
+    if [[ -n "$rollback_cmd" ]]; then
+        register_rollback "$rollback_cmd"
+    fi
+}
+
 # ─── Constants ────────────────────────────────────────────────
 readonly SCRIPT_VERSION="1.0.0"
 readonly SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")
@@ -194,6 +240,41 @@ stop_spinner() {
   fi
 }
 
+# ─── Rollback System ─────────────────────────────────────────
+
+declare -a ROLLBACK_STACK=()
+
+register_rollback() {
+    local command="$1"
+    ROLLBACK_STACK+=("$command")
+    debug "Registered rollback command: $command"
+}
+
+execute_rollback() {
+    local reason="$1"
+    local exit_code="${2:-1}"
+
+    error "Initiating rollback: $reason"
+
+    # Execute rollback commands in reverse order
+    for ((i=${#ROLLBACK_STACK[@]}-1; i>=0; i--)); do
+        local cmd="${ROLLBACK_STACK[i]}"
+        warn "Executing rollback command: $cmd"
+        eval "$cmd" || warn "Rollback command failed: $cmd"
+    done
+
+    # Clear the rollback stack
+    ROLLBACK_STACK=()
+
+    error "Rollback complete"
+    return $exit_code
+}
+
+# Example rollback registrations:
+# register_rollback "docker compose -f \"$DOCKER_COMPOSE_FILE\" down"
+# register_rollback "rm -rf \"$CONTAINER_DIR\""
+# register_rollback "userdel -r \"$tunnel_user\""
+
 # ─── Backup Functions ────────────────────────────────────────
 
 create_backup() {
@@ -243,15 +324,68 @@ restore_backup() {
     return 0
 }
 
-# ─── Error Handling ────────────────────────────────────────
+# ─── Error Recovery System ────────────────────────────────────
+
+# Error status tracking
+declare -A ERROR_STATUS
+declare -i ERROR_COUNT=0
+readonly MAX_RETRIES=3
+readonly RETRY_DELAY=5
+
+# Error types
+readonly E_GENERAL=1      # General error
+readonly E_NETWORK=2      # Network-related error
+readonly E_PERMISSION=3   # Permission-related error
+readonly E_DOCKER=4      # Docker-related error
+readonly E_FILESYSTEM=5   # Filesystem-related error
+readonly E_DEPENDENCY=6   # Dependency-related error
+
+# Recovery state file
+readonly RECOVERY_STATE="/tmp/msi_recovery_state"
+
+save_recovery_state() {
+    local stage="$1"
+    local data="${2:-}"
+
+    mkdir -p "$(dirname "$RECOVERY_STATE")"
+    echo "STAGE=$stage" > "$RECOVERY_STATE"
+    echo "DATA=$data" >> "$RECOVERY_STATE"
+    echo "TIMESTAMP=$(date +%s)" >> "$RECOVERY_STATE"
+}
+
+load_recovery_state() {
+    if [[ -f "$RECOVERY_STATE" ]]; then
+        source "$RECOVERY_STATE"
+        return 0
+    fi
+    return 1
+}
+
 cleanup() {
     local exit_code=$?
+
+    # Kill spinner if running
     if [[ -n "${spinner_pid:-}" ]]; then
         kill "${spinner_pid}" &>/dev/null || true
         wait "${spinner_pid}" 2>/dev/null || true
         spinner_pid=""
     fi
-    # Additional cleanup tasks can be added here
+
+    # Cleanup temporary files
+    rm -f "$RECOVERY_STATE"
+
+    # If error occurred during Docker setup, ensure containers are stopped
+    if [[ $exit_code -ne 0 && -f "$DOCKER_COMPOSE_FILE" ]]; then
+        docker compose -f "$DOCKER_COMPOSE_FILE" down &>/dev/null || true
+    fi
+
+    # Log final status
+    if [[ $exit_code -eq 0 ]]; then
+        info "Script completed successfully"
+    else
+        error "Script failed with exit code $exit_code"
+    fi
+
     exit $exit_code
 }
 
@@ -259,13 +393,94 @@ error_handler() {
     local line_num=$1
     local error_code=$2
     local last_cmd=$3
-    echo -e "\n${RED}Error occurred in script at line: ${line_num}${NC}"
-    echo -e "${RED}Last command executed: ${last_cmd}${NC}"
-    echo -e "${RED}Exit code: ${error_code}${NC}"
-    exit $error_code
+    local retry_count=${4:-0}
+
+    error "Error occurred in script at line: $line_num"
+    error "Command: $last_cmd"
+    error "Exit code: $error_code"
+
+    # Track error
+    ERROR_STATUS["$line_num"]=$error_code
+    ((ERROR_COUNT++))
+
+    # Determine error type
+    local error_type
+    case $error_code in
+        126|127) error_type=$E_DEPENDENCY ;; # Command not found
+        13)      error_type=$E_PERMISSION ;; # Permission denied
+        28)      error_type=$E_NETWORK ;;    # Network timeout
+        *)       error_type=$E_GENERAL ;;
+    esac
+
+    # Attempt recovery based on error type
+    if [[ $retry_count -lt $MAX_RETRIES ]]; then
+        warn "Attempting recovery (attempt $((retry_count + 1))/$MAX_RETRIES)..."
+
+        case $error_type in
+            $E_NETWORK)
+                warn "Network error detected, waiting before retry..."
+                sleep $((RETRY_DELAY * 2))
+                ;;
+            $E_PERMISSION)
+                warn "Permission error detected, checking sudo..."
+                if ! sudo -n true 2>/dev/null; then
+                    error "Sudo access required but not available"
+                    exit $E_PERMISSION
+                fi
+                ;;
+            $E_DOCKER)
+                warn "Docker error detected, attempting service restart..."
+                systemctl restart docker &>/dev/null || true
+                sleep $RETRY_DELAY
+                ;;
+            $E_FILESYSTEM)
+                warn "Filesystem error detected, checking disk space..."
+                if ! check_disk_space; then
+                    error "Insufficient disk space"
+                    exit $E_FILESYSTEM
+                fi
+                ;;
+        esac
+
+        # Save state for recovery
+        save_recovery_state "ERROR" "LINE=$line_num CMD=$last_cmd TYPE=$error_type"
+
+        # Retry the failed command
+        warn "Retrying failed command..."
+        sleep $RETRY_DELAY
+        eval "$last_cmd"
+        local retry_result=$?
+
+        if [[ $retry_result -eq 0 ]]; then
+            info "Recovery successful"
+            return 0
+        else
+            error_handler "$line_num" "$retry_result" "$last_cmd" $((retry_count + 1))
+        fi
+    else
+        error "Maximum retry attempts reached"
+        error "Error recovery failed"
+        display_error_summary
+        exit $error_code
+    fi
 }
 
-trap cleanup EXIT
+check_disk_space() {
+    local min_space=5242880 # 5GB in KB
+    local available
+    available=$(df -k "$BASE_DIR" | awk 'NR==2 {print $4}')
+    [[ $available -ge $min_space ]]
+}
+
+display_error_summary() {
+    if [[ $ERROR_COUNT -gt 0 ]]; then
+        error "Error Summary:"
+        error "Total errors encountered: $ERROR_COUNT"
+        for line in "${!ERROR_STATUS[@]}"; do
+            error "  Line $line: Exit code ${ERROR_STATUS[$line]}"
+        done
+    fi
+}trap cleanup EXIT
 trap 'error_handler ${LINENO} $? "$BASH_COMMAND"' ERR
 
 # ─── Functions ───────────────────────────────────────────────
@@ -346,14 +561,22 @@ echo ""
 
 # EOF
 
-# ─── System Checks ──────────────────────────────────────────
+# ─── Installation Process ─────────────────────────────────────
 
-for cmd in apt curl openssl awk id useradd systemctl; do
-  print_status "Checking $cmd"
-  require_command "$cmd"
-  pause
-  print_success "$cmd is installed"
-done
+run_installation() {
+    begin_transaction "Media Server Installation"
+
+    # System Checks
+    add_step "System requirements verification"
+    for cmd in apt curl openssl awk id useradd systemctl; do
+        print_status "Checking $cmd"
+        if ! require_command "$cmd"; then
+            rollback_transaction "Missing required command: $cmd"
+            return $E_DEPENDENCY
+        fi
+        pause
+        print_success "$cmd is installed"
+    done
 
 if ! openssl passwd -6 test &>/dev/null; then
   abort "OpenSSL does not support -6 option for password hashing"

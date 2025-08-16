@@ -4,14 +4,38 @@
 # Media Server Installer (MSI) for Linux
 # Sets up Jellyfin + media stack using Docker
 #
-# https://github.com/nobikaze/media-server-installer/
-# MIT LICENSE
+# Version:     1.0.0
+# Author:      nobikaze
+# Repository:  https://github.com/nobikaze/media-server-installer/
+# License:     MIT
+#
+# Dependencies:
+#   - bash (>= 4.0)
+#   - docker (>= 20.10)
+#   - systemd
+#   - curl
+#   - openssl
 # ─────────────────────────────────────────────────────────────
 
-# Fail fast and be strict in scripts. This makes errors visible and avoids
-# many classes of subtle bugs (undefined variables, silent failures).
+# ─── Script Settings ────────────────────────────────────────
+# Fail fast and be strict in scripts
 set -euo pipefail
 IFS=$'\n\t'
+
+# ─── Constants ────────────────────────────────────────────────
+readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")
+readonly MIN_BASH_VERSION="4.0"
+readonly MIN_DOCKER_VERSION="20.10"
+readonly REQUIRED_COMMANDS=(apt curl openssl awk id useradd systemctl)
+readonly DEFAULT_TIMEZONE="UTC"
+readonly MIN_PASSWORD_LENGTH=6
+
+# ─── Directories ──────────────────────────────────────────────
+readonly BASE_DIR="/srv/media"
+readonly CONTAINER_DIR="${BASE_DIR}/containers"
+readonly LIBRARY_DIR="${BASE_DIR}/library"
+readonly DOCKER_COMPOSE_FILE="${CONTAINER_DIR}/docker-compose.yml"
 
 # ─── Color Codes ──────────────────────────────────────────────
 RED='\033[0;31m'
@@ -187,6 +211,40 @@ print_status "Checking root privileges"
 [ "$(id -u)" -eq 0 ] || abort "This script must be run as root"
 pause
 print_success "Root privileges"
+
+# ─── System Validation Functions ────────────────────────────
+
+check_bash_version() {
+    local current_version
+    current_version=$(bash --version | head -n1 | cut -d' ' -f4 | cut -d'.' -f1-2)
+    if ! awk -v v1="$current_version" -v v2="$MIN_BASH_VERSION" 'BEGIN{exit !(v1 >= v2)}'; then
+        abort "Bash version $MIN_BASH_VERSION or higher is required (current: $current_version)"
+    fi
+}
+
+check_docker_version() {
+    if command -v docker &>/dev/null; then
+        local current_version
+        current_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null | cut -d'.' -f1-2)
+        if ! awk -v v1="$current_version" -v v2="$MIN_DOCKER_VERSION" 'BEGIN{exit !(v1 >= v2)}'; then
+            abort "Docker version $MIN_DOCKER_VERSION or higher is required (current: $current_version)"
+        fi
+    fi
+}
+
+check_system_requirements() {
+    print_status "Checking system requirements"
+    check_bash_version
+
+    for cmd in "${REQUIRED_COMMANDS[@]}"; do
+        require_command "$cmd"
+    done
+
+    if ! openssl passwd -6 test &>/dev/null; then
+        abort "OpenSSL does not support -6 option for password hashing"
+    fi
+    print_success "System requirements met"
+}
 
 # ─── Input Validation Functions ──────────────────────────────
 
@@ -376,6 +434,67 @@ systemctl restart ssh || systemctl restart sshd
 
 print_success "OpenSSH server configured"
 
+# ─── Docker Functions ────────────────────────────────────────
+
+setup_docker_repository() {
+    local os_id="$1"
+    local os_codename="$2"
+    local repo_base="https://download.docker.com/linux/${os_id}"
+
+    print_status "Setting up Docker repository"
+
+    # Create keyrings directory
+    install -m 0755 -d /etc/apt/keyrings
+
+    # Download and verify Docker's GPG key
+    if ! curl -fsSL "${repo_base}/gpg" -o /etc/apt/keyrings/docker.asc; then
+        abort "Failed to download Docker GPG key"
+    fi
+    chmod a+r /etc/apt/keyrings/docker.asc
+
+    # Add Docker repository
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] ${repo_base} \
+    ${os_codename} stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    print_success "Docker repository configured"
+}
+
+install_docker_packages() {
+    print_status "Installing Docker packages"
+
+    if ! apt update > /dev/null 2>&1; then
+        abort "Failed to update package list"
+    fi
+
+    local packages=(
+        docker-ce
+        docker-ce-cli
+        containerd.io
+        docker-buildx-plugin
+        docker-compose-plugin
+    )
+
+    if ! apt install "${packages[@]}" -y > /dev/null 2>&1; then
+        abort "Failed to install Docker packages"
+    fi
+
+    print_success "Docker packages installed"
+}
+
+verify_docker_installation() {
+    print_status "Verifying Docker installation"
+
+    if ! docker --version > /dev/null 2>&1; then
+        abort "Docker installation failed"
+    fi
+
+    if ! docker compose version > /dev/null 2>&1; then
+        abort "Docker Compose installation failed"
+    fi
+
+    print_success "Docker verified successfully"
+}
+
 # ─── Docker Installation ───────────────────────────────────
 
 print_status "Installing Docker"
@@ -413,23 +532,51 @@ fi
 
 print_success "Docker installed"
 
+# ─── Directory Management Functions ──────────────────────────
+
+create_service_directories() {
+    local user="$1"
+    local puid
+    local pgid
+
+    print_status "Creating service directories"
+
+    puid=$(id -u "$user")
+    pgid=$(id -g "$user")
+
+    # Create main directories
+    mkdir -p "$BASE_DIR"
+
+    # Create container config directories
+    local container_dirs=(
+        prowlarr
+        sonarr
+        radarr
+        bazarr
+        qbittorrent
+        jdownloader-2
+        jellyfin
+    )
+
+    for dir in "${container_dirs[@]}"; do
+        mkdir -p "${CONTAINER_DIR}/${dir}/config"
+    done
+
+    # Create library directories
+    mkdir -p "${LIBRARY_DIR}"/{movies,shows}
+    mkdir -p "${LIBRARY_DIR}/downloads/jdownloader-2"
+
+    # Set permissions
+    chown -R "${user}:${user}" "$BASE_DIR"
+    chmod -R 755 "$BASE_DIR"
+
+    print_success "Service directories created"
+    return 0
+}
+
 # ─── Docker Setup ──────────────────────────────────────────
 
-print_status "Setting up directories"
-
-SRV_DIR="/srv/media"
-CONTAINER_DIR="$SRV_DIR/containers"
-LIBRARY_DIR="$SRV_DIR/library"
-PUID=$(id -u "$docker_user")
-PGID=$(id -g "$docker_user")
-
-mkdir -p "$SRV_DIR"
-mkdir -p "$CONTAINER_DIR"/{prowlarr,sonarr,radarr,bazarr,qbittorrent,jdownloader-2,jellyfin}/config \
-         "$LIBRARY_DIR"/{movies,shows} \
-         "$LIBRARY_DIR"/downloads/jdownloader-2
-
-chown -R "$docker_user:$docker_user" "$SRV_DIR"
-chmod -R 755 "$SRV_DIR"
+create_service_directories "${config[docker_user]}"
 print_success "Directories created"
 
 # ─── Compose File ──────────────────────────────────────────

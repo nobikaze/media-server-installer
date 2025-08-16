@@ -14,6 +14,19 @@ Automated installer script for setting up a self-hosted media server using **Doc
 
 ---
 
+# 🚀 Now Powered by AI Innovation
+
+This project now leverages an **AI-driven developer approach** to ensure it’s modern, efficient, and future-ready. By integrating innovative AI principles into its design and documentation, the project gains:
+
+- **Smarter automation** – reducing repetitive tasks and simplifying complex setups.
+- **Improved reliability** – AI-assisted code refinement helps minimize errors and edge cases.
+- **Developer productivity** – freeing up time to focus on what matters, while AI handles boilerplate.
+- **Future-proofing** – staying aligned with modern DevOps and self-hosting practices.
+
+In short, this installer isn’t just about media servers anymore — it’s about bringing the **best of AI-enhanced development** into your homelab.
+
+---
+
 ## 📦 Overview
 
 `msi.sh` simplifies and automates the setup of a full-featured media stack on Linux systems. It configures:

@@ -97,7 +97,7 @@ begin_transaction() {
     local description="$1"
     TRANSACTION_ID=$(date +%s)
     mkdir -p "$(dirname "$TRANSACTION_LOG")"
-    echo "BEGIN TRANSACTION $TRANSACTION_ID: $description" >> "$TRANSACTION_LOG"
+    case $1 in
     debug "Started transaction $TRANSACTION_ID: $description"
 }
 
@@ -1151,53 +1151,19 @@ validate_password() {
 echo -e "\n${CYAN}Collecting configuration${NC}"
 declare -A config
 
-collect_input() {
-    local prompt="$1"
-    local var_name="$2"
-    local validator="$3"
-    local error_msg="$4"
-    local silent="${5:-false}"
-    local input
-
-    while true; do
-        if [[ "$silent" == "true" ]]; then
-            read -r -s -p "$prompt" input && echo
-        else
-            read -r -p "$prompt" input
-        fi
-
-        if [[ -n "$validator" ]] && ! $validator "$input"; then
-            echo -e "${RED}$error_msg${NC}"
-            continue
-        fi
-
-        config[$var_name]="$input"
-        break
-    done
-}
-
-while true; do
-    collect_input \
-        "[1/5] Allowed CIDR IP (e.g. 192.168.1.0/24): " \
-        "cidr" \
-        validate_cidr \
-        "❌ Invalid CIDR format. Try again."
-
-    collect_input \
-        "[2/5] Docker username: " \
-        "docker_user" \
-        validate_username \
-        "❌ Invalid username format. Try again."
-
-    # Additional check for existing user
-    if ! id "${config[docker_user]}" &>/dev/null; then
-        echo -e "${RED}❌ User does not exist${NC}"
-        continue
-    fi
-
-    collect_input \
-        "[3/5] Timezone (e.g. America/New_York): " \
-        "USER_TZ" \
+# Unattended mode logic
+if [[ -n "${UNATTENDED:-}" ]]; then
+    config["cidr"]="192.168.1.0/24"
+    config["docker_user"]="mediauser"
+    config["USER_TZ"]="UTC"
+    config["tunnel_user"]="tunneluser"
+    config["tunnel_pass"]="changeme"
+    config["motd_path"]="/etc/msi/motd"
+    print_success "Configuration complete (unattended mode)"
+else
+    print_status "Interactive configuration collection not implemented."
+    abort "Interactive mode is not yet supported in this version."
+fi
         validate_timezone \
         "❌ Invalid timezone. Format should be Region/City (e.g. America/New_York, Europe/London)
    You can find valid values in /usr/share/zoneinfo/"
@@ -1739,18 +1705,21 @@ verify_services() {
 cat << EOF
 
 To access services via SSH tunnel:
-ssh -N \\
-  -L 127.0.0.1:6767:127.0.0.1:6767 \\
-  -L 127.0.0.1:7878:127.0.0.1:7878 \\
-  -L 127.0.0.1:8989:127.0.0.1:8989 \\
-  -L 127.0.0.1:9696:127.0.0.1:9696 \\
-  -L 127.0.0.1:8080:127.0.0.1:8080 \\
-  -L 127.0.0.1:5800:127.0.0.1:5800 \\
-  $tunnel_user@your-server-ip
+ssh -N \
+    -L 127.0.0.1:6767:127.0.0.1:6767 \
+    -L 127.0.0.1:7878:127.0.0.1:7878 \
+    -L 127.0.0.1:8989:127.0.0.1:8989 \
+    -L 127.0.0.1:9696:127.0.0.1:9696 \
+    -L 127.0.0.1:8080:127.0.0.1:8080 \
+    -L 127.0.0.1:5800:127.0.0.1:5800 \
+    $tunnel_user@<server_ip>
 
 Use 'sudo msi-update' command for updates.
 
 ✅ Media server setup complete!
 EOF
+
+# Ensure installation function is called
+run_installation
 
 exit 0

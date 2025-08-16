@@ -9,6 +9,15 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/nobikaze/media-server-installer/pulls)
 
 ---
+⚠️ **Developer Warning: Experimental Branch Notice**
+
+The `future-work` branch contains **highly experimental code** intended **only for AI-related experimentation**.
+It is **not stable, not production-ready, and may break your system**.
+
+✅ Use **only the `main` branch** for production deployments.
+❌ Do **not** rely on `future-work` until its features are merged into `main`.
+
+---
 
 Automated installer script for setting up a self-hosted media server using **Docker** and services like **Jellyfin**, **Sonarr**, **Radarr**, **Prowlarr**, **Bazarr**, **qBittorrent**, and **JDownloader 2**.
 

@@ -135,6 +135,92 @@ add_step() {
 
 # ─── Constants ────────────────────────────────────────────────
 readonly SCRIPT_VERSION="1.0.0"
+
+# ─── Network Validation Functions ─────────────────────────────
+
+# Essential domains for the media server
+readonly -a REQUIRED_DOMAINS=(
+    "docker.io"
+    "registry-1.docker.io"
+    "auth.docker.io"
+    "production.cloudflare.docker.com"
+    "download.docker.com"
+    "raw.githubusercontent.com"
+    "github.com"
+)
+
+validate_network_connectivity() {
+    local result=0
+    print_status "Validating network connectivity"
+
+    # Check basic internet connectivity
+    if ! ping -c 1 8.8.8.8 &>/dev/null; then
+        error "No internet connectivity detected"
+        return 1
+    }
+
+    # Check DNS resolution
+    if ! nslookup google.com &>/dev/null; then
+        error "DNS resolution failure"
+        return 1
+    }
+
+    # Check required domains
+    for domain in "${REQUIRED_DOMAINS[@]}"; do
+        if ! timeout 5 bash -c "echo > /dev/tcp/${domain}/443" 2>/dev/null; then
+            error "Cannot connect to required domain: ${domain}"
+            ((result++))
+        fi
+    done
+
+    # Check proxy settings if configured
+    if [[ -n "${http_proxy:-}" ]] || [[ -n "${https_proxy:-}" ]]; then
+        debug "Proxy detected, validating proxy connectivity"
+        local proxy_url
+        proxy_url="${https_proxy:-${http_proxy}}"
+        proxy_url="${proxy_url#*://}"
+        proxy_host="${proxy_url%:*}"
+        proxy_port="${proxy_url##*:}"
+
+        if ! timeout 5 bash -c "echo > /dev/tcp/${proxy_host}/${proxy_port}" 2>/dev/null; then
+            error "Cannot connect to proxy: ${proxy_host}:${proxy_port}"
+            ((result++))
+        fi
+    fi
+
+    # Check firewall status and required ports
+    if command -v ufw &>/dev/null; then
+        if ! ufw status | grep -q "Status: active"; then
+            warn "UFW firewall is not active"
+        fi
+        for port in "${REQUIRED_PORTS[@]}"; do
+            if ! ufw status | grep -qE "^$port/tcp.*ALLOW"; then
+                warn "Port $port is not explicitly allowed in UFW"
+            fi
+        done
+    fi
+
+    # Validate network interface configuration
+    local default_interface
+    default_interface=$(ip route | awk '/default/ {print $5}' | head -n1)
+    if [[ -z "$default_interface" ]]; then
+        error "No default network interface found"
+        ((result++))
+    else
+        # Check interface status
+        if ! ip link show "$default_interface" | grep -q "UP"; then
+            error "Default interface $default_interface is down"
+            ((result++))
+        fi
+        # Check for valid IP address
+        if ! ip addr show "$default_interface" | grep -qE "inet [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+"; then
+            error "No valid IP address configured on $default_interface"
+            ((result++))
+        fi
+    fi
+
+    return $result
+}
 readonly SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")
 readonly MIN_BASH_VERSION="4.0"
 readonly MIN_DOCKER_VERSION="20.10"
@@ -589,6 +675,124 @@ print_status "Checking root privileges"
 pause
 print_success "Root privileges"
 
+# ─── Environmental Compatibility Checks ──────────────────────
+
+readonly -A REQUIRED_KERNEL_PARAMS=(
+    ["net.ipv4.ip_forward"]="1"
+    ["net.bridge.bridge-nf-call-iptables"]="1"
+    ["fs.inotify.max_user_watches"]="524288"
+)
+
+readonly -a REQUIRED_FILESYSTEMS=(
+    "overlay"
+    "overlay2"
+)
+
+validate_environment() {
+    local result=0
+    print_status "Validating system environment"
+
+    # Check kernel version
+    local kernel_version
+    kernel_version=$(uname -r)
+    if ! awk -v ver="$kernel_version" 'BEGIN{if (ver < "4.0.0") exit 1; exit 0}'; then
+        error "Kernel version $kernel_version is too old (minimum 4.0.0 required)"
+        ((result++))
+    fi
+
+    # Check system architecture
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)
+            debug "Architecture $arch is supported"
+            ;;
+        aarch64|arm64)
+            debug "Architecture $arch is supported"
+            ;;
+        *)
+            error "Unsupported architecture: $arch"
+            ((result++))
+            ;;
+    esac
+
+    # Validate kernel parameters
+    for param in "${!REQUIRED_KERNEL_PARAMS[@]}"; do
+        local expected="${REQUIRED_KERNEL_PARAMS[$param]}"
+        local actual
+        actual=$(sysctl -n "$param" 2>/dev/null)
+        if [[ -z "$actual" ]]; then
+            error "Kernel parameter $param is not set"
+            ((result++))
+        elif [[ "$actual" != "$expected" ]]; then
+            error "Kernel parameter $param=$actual (expected $expected)"
+            ((result++))
+        fi
+    done
+
+    # Check required filesystems
+    local missing_fs=0
+    for fs in "${REQUIRED_FILESYSTEMS[@]}"; do
+        if ! grep -q "$fs" /proc/filesystems; then
+            error "Required filesystem $fs is not available"
+            ((missing_fs++))
+        fi
+    done
+    ((result+=missing_fs))
+
+    # Check system entropy
+    local entropy
+    entropy=$(cat /proc/sys/kernel/random/entropy_avail)
+    if [[ $entropy -lt 1000 ]]; then
+        warn "Low entropy pool ($entropy bytes available)"
+    fi
+
+    # Check system locale
+    if [[ -z "${LANG:-}" ]]; then
+        warn "LANG environment variable is not set"
+    elif ! locale -a | grep -q "${LANG%.*}"; then
+        error "System locale $LANG is not installed"
+        ((result++))
+    fi
+
+    # Check system time synchronization
+    if command -v timedatectl &>/dev/null; then
+        if ! timedatectl status | grep -q "synchronized: yes"; then
+            warn "System time is not synchronized"
+        fi
+    fi
+
+    # Check for required device nodes
+    for device in /dev/stdin /dev/stdout /dev/stderr /dev/null /dev/random /dev/urandom; do
+        if [[ ! -e "$device" ]]; then
+            error "Required device node $device is missing"
+            ((result++))
+        fi
+    done
+
+    # Check SELinux/AppArmor status
+    if command -v getenforce &>/dev/null; then
+        local selinux_mode
+        selinux_mode=$(getenforce 2>/dev/null)
+        case "$selinux_mode" in
+            Enforcing)
+                warn "SELinux is in enforcing mode, might need configuration"
+                ;;
+            Disabled)
+                debug "SELinux is disabled"
+                ;;
+        esac
+    fi
+
+    if command -v aa-status &>/dev/null; then
+        if aa-status --enabled 2>/dev/null; then
+            warn "AppArmor is enabled, might need configuration"
+        fi
+    fi
+
+    return $result
+}
+
 # ─── System Validation Functions ────────────────────────────
 
 check_bash_version() {
@@ -841,7 +1045,84 @@ load_config() {
     fi
 
     return 0
-}# ─── Input Validation Functions ──────────────────────────────
+}# ─── User Permission Validation ────────────────────────────
+
+readonly -a REQUIRED_USER_GROUPS=(
+    "docker"
+    "sudo"
+)
+
+validate_user_permissions() {
+    local username="$1"
+    local result=0
+    print_status "Validating user permissions for $username"
+
+    # Check if user exists
+    if ! id "$username" &>/dev/null; then
+        error "User $username does not exist"
+        return 1
+    }
+
+    # Get user's UID and primary group
+    local user_uid
+    local user_gid
+    user_uid=$(id -u "$username")
+    user_gid=$(id -g "$username")
+
+    # Check UID (avoid system user range)
+    if [[ $user_uid -lt 1000 ]]; then
+        error "User $username has system UID ($user_uid). Regular user UID should be >= 1000"
+        ((result++))
+    fi
+
+    # Check required groups membership
+    for group in "${REQUIRED_USER_GROUPS[@]}"; do
+        if ! getent group "$group" &>/dev/null; then
+            error "Required group $group does not exist"
+            ((result++))
+        elif ! groups "$username" | grep -q "\b$group\b"; then
+            error "User $username is not a member of required group $group"
+            ((result++))
+        fi
+    done
+
+    # Check home directory
+    local user_home
+    user_home=$(getent passwd "$username" | cut -d: -f6)
+    if [[ ! -d "$user_home" ]]; then
+        error "Home directory $user_home does not exist"
+        ((result++))
+    else
+        # Check home directory permissions
+        local home_perms
+        home_perms=$(stat -c "%a" "$user_home")
+        if [[ $home_perms != "755" && $home_perms != "750" ]]; then
+            warn "Home directory $user_home has potentially unsafe permissions: $home_perms"
+        fi
+    fi
+
+    # Check sudo access if required
+    if [[ " ${REQUIRED_USER_GROUPS[*]} " == *" sudo "* ]]; then
+        if ! sudo -l -U "$username" &>/dev/null; then
+            error "User $username does not have sudo privileges"
+            ((result++))
+        fi
+    fi
+
+    # Validate Docker permissions
+    if command -v docker &>/dev/null; then
+        if ! docker info &>/dev/null; then
+            if ! groups "$username" | grep -q "\bdocker\b"; then
+                error "User $username cannot access Docker daemon"
+                ((result++))
+            fi
+        fi
+    fi
+
+    return $result
+}
+
+# ─── Input Validation Functions ──────────────────────────────
 
 validate_cidr() {
     local cidr="$1"

@@ -1,31 +1,73 @@
 #!/bin/bash
 
+# Exit on error, unset variables, and pipe failures
 set -euo pipefail
 
+# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+# Check if running on a supported system
+if [ ! -f /etc/os-release ]; then
+    echo -e "${RED}This script requires a system with /etc/os-release${NC}"
+    exit 1
+fi
+
+. /etc/os-release
+if [[ ! "$ID" =~ ^(debian|ubuntu)$ ]]; then
+    echo -e "${RED}This script is only supported on Debian/Ubuntu systems${NC}"
+    exit 1
+fi
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}This script must be run as root. Use sudo.${NC}"
+   exit 1
+fi
+
+# Check if Docker is installed
+if ! command -v docker &> /dev/null; then
+    echo -e "${YELLOW}Docker is not installed. Skipping container removal.${NC}"
+    DOCKER_INSTALLED=false
+else
+    DOCKER_INSTALLED=true
+fi
 
 echo -e "${RED}WARNING: This will REMOVE all media server containers, config, users, firewall rules, and packages installed by msi.sh!${NC}"
 read -p "Are you sure you want to continue? (y/N): " confirm
 [[ "$confirm" == "y" || "$confirm" == "Y" ]] || exit 1
 
 # Stop and remove containers and volumes
-if [ -f /srv/media/containers/docker-compose.yml ]; then
+if [ "$DOCKER_INSTALLED" = true ] && [ -f /srv/media/containers/docker-compose.yml ]; then
     echo "Stopping and removing containers and volumes..."
-    docker compose -f /srv/media/containers/docker-compose.yml down --volumes --remove-orphans
-fi
+    if docker compose -f /srv/media/containers/docker-compose.yml down --volumes --remove-orphans; then
+        echo -e "${GREEN}Successfully removed containers and volumes${NC}"
+    else
+        echo -e "${YELLOW}Warning: Error while removing containers and volumes${NC}"
+    fi
 
-# Remove Docker images
-echo "Removing related Docker images..."
-docker image rm jellyfin/jellyfin:latest \
-    lscr.io/linuxserver/sonarr:latest \
-    lscr.io/linuxserver/radarr:latest \
-    lscr.io/linuxserver/prowlarr:latest \
-    lscr.io/linuxserver/bazarr:latest \
-    lscr.io/linuxserver/qbittorrent:latest \
-    jlesage/jdownloader-2 || true
+    # Remove Docker images
+    echo "Removing related Docker images..."
+    images=(
+        "jellyfin/jellyfin:latest"
+        "lscr.io/linuxserver/sonarr:latest"
+        "lscr.io/linuxserver/radarr:latest"
+        "lscr.io/linuxserver/prowlarr:latest"
+        "lscr.io/linuxserver/bazarr:latest"
+        "lscr.io/linuxserver/qbittorrent:latest"
+        "jlesage/jdownloader-2"
+    )
+
+    for image in "${images[@]}"; do
+        if docker image rm "$image" 2>/dev/null; then
+            echo -e "${GREEN}Removed image: $image${NC}"
+        else
+            echo -e "${YELLOW}Warning: Could not remove image: $image${NC}"
+        fi
+    done
+fi
 
 # Remove media directories
 echo "Removing /srv/media directory..."

@@ -157,11 +157,18 @@ while true; do
   done
   while true; do
     read -r -p "[3/5] Timezone (e.g. America/New_York): " USER_TZ
+    # Check if timezone is valid and exists
     if [ -f "/usr/share/zoneinfo/$USER_TZ" ]; then
-      break
-    else
-      echo "❌ Invalid timezone. You can find valid values in /usr/share/zoneinfo/"
+      # Verify timezone format (Region/City)
+      if [[ "$USER_TZ" =~ ^[A-Za-z]+/[A-Za-z_-]+$ ]]; then
+        # Test if timezone is actually valid
+        if TZ="$USER_TZ" date > /dev/null 2>&1; then
+          break
+        fi
+      fi
     fi
+    echo "❌ Invalid timezone. Format should be Region/City (e.g. America/New_York, Europe/London)"
+    echo "   You can find valid values in /usr/share/zoneinfo/"
   done
   while true; do
     read -r -p "[4/5] Tunnel user: " tunnel_user
@@ -270,15 +277,38 @@ print_success "OpenSSH server configured"
 # ─── Docker Installation ───────────────────────────────────
 
 print_status "Installing Docker"
+
+# Determine OS for Docker repository
+. /etc/os-release
+if [[ ! "$ID" =~ ^(debian|ubuntu)$ ]]; then
+    abort "This script only supports Debian or Ubuntu"
+fi
+
+DOCKER_REPO_BASE="https://download.docker.com/linux/${ID}"
+
+# Set up Docker repository
 install -m 0755 -d /etc/apt/keyrings > /dev/null 2>&1
-curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+curl -fsSL "${DOCKER_REPO_BASE}/gpg" -o /etc/apt/keyrings/docker.asc || abort "Failed to download Docker GPG key"
 chmod a+r /etc/apt/keyrings/docker.asc > /dev/null 2>&1
+
 echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt update > /dev/null 2>&1
-apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y > /dev/null 2>&1
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] ${DOCKER_REPO_BASE} \
+  ${VERSION_CODENAME} stable" | \
+  tee /etc/apt/sources.list.d/docker.list > /dev/null || abort "Failed to add Docker repository"
+
+# Install Docker
+apt update > /dev/null 2>&1 || abort "Failed to update package list"
+apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y > /dev/null 2>&1 || abort "Failed to install Docker"
+
+# Verify Docker installation
+if ! docker --version > /dev/null 2>&1; then
+    abort "Docker installation failed"
+fi
+
+if ! docker compose version > /dev/null 2>&1; then
+    abort "Docker Compose installation failed"
+fi
+
 print_success "Docker installed"
 
 # ─── Docker Setup ──────────────────────────────────────────

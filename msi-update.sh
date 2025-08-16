@@ -1,8 +1,31 @@
 #!/bin/bash
 
+# Check if running on a supported system
+if [ ! -f /etc/os-release ]; then
+    echo "This script requires a system with /etc/os-release"
+    exit 1
+fi
+
+. /etc/os-release
+if [[ ! "$ID" =~ ^(debian|ubuntu)$ ]]; then
+    echo "This script is only supported on Debian/Ubuntu systems"
+    exit 1
+fi
+
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root. Use sudo."
    exit 1
+fi
+
+# Check for Docker and Docker Compose
+if ! command -v docker &> /dev/null; then
+    echo "Docker is not installed"
+    exit 1
+fi
+
+if ! docker compose version &> /dev/null; then
+    echo "Docker Compose is not installed"
+    exit 1
 fi
 
 #                            ░██               ░██

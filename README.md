@@ -29,6 +29,29 @@ By adopting an AI-driven development approach, this project not only improves it
 
 ---
 
+# 🌌 Philosophy & Design Principles
+
+Building a media server is not just about standing up containers or streaming files — it’s about creating a **digital ecosystem** that balances performance, security, and sustainability. `msi.sh` was designed with this broader perspective in mind, and its guiding principles reflect the lessons learned from years of experimentation in homelabs, cloud deployments, and production environments.
+
+1. **Simplicity as Power**
+   Automation is not about hiding complexity but about *managing* it. `msi.sh` follows a declarative approach where your intent (a working media server) is more important than the step-by-step commands. By reducing cognitive overhead, you spend less time debugging arcane Docker flags and more time enjoying your content.
+
+2. **Security by Default**
+   Self-hosting carries risks. That’s why this installer defaults to **local binding** and requires **explicit tunneling** for remote access. Instead of exposing dashboards to the open internet, it nudges you toward safer, VPN-like workflows. This philosophy ensures that convenience never comes at the cost of your privacy or data safety.
+
+3. **Sustainability & Efficiency**
+   Media consumption often leans on power-hungry machines and bloated setups. With `msi.sh`, the philosophy is **lean first**: containers are trimmed, transcoding is discouraged (favoring direct play), and maintenance is designed to be light. This helps you save on electricity bills, reduce e-waste, and contribute to a greener digital ecosystem without sacrificing functionality.
+
+4. **Community over Perfection**
+   This script will never be "finished." Instead, it is meant to **evolve with its users**. Issues, pull requests, and forks are not signs of weakness but proof of a living project. By encouraging collaboration, the installer grows in directions a single developer could never anticipate.
+
+5. **Future-Readiness**
+   The world of self-hosting is fast-moving. New services appear, protocols shift, and yesterday’s best practices quickly become obsolete. By keeping the installer modular and transparent, `msi.sh` ensures you are never locked into one “way of doing things.” It’s a foundation, not a cage — flexible enough to adapt to the technologies of tomorrow.
+
+In essence, `msi.sh` is less about pushing a button and more about embracing a mindset: **automation that respects your time, protects your data, and scales with your imagination.** Whether you are setting up your very first Jellyfin server or integrating a complex homelab stack, this project is built to grow alongside you.
+
+---
+
 ## 📦 Overview
 
 `msi.sh` simplifies and automates the setup of a full-featured media stack on Linux systems. It configures:

@@ -1,5 +1,70 @@
 #!/usr/bin/env bash
 
+usage() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Media Server Installer (MSI) for Linux
+Sets up Jellyfin + media stack using Docker
+
+Options:
+    -h, --help              Show this help message
+    -v, --version          Show version information
+    -d, --debug            Enable debug logging
+    -b, --backup           Create a backup before installation
+    -r, --restore FILE     Restore from backup file
+    --skip-docker          Skip Docker installation
+    --unattended          Run in unattended mode with defaults
+
+Examples:
+    $(basename "$0")              # Normal installation
+    $(basename "$0") --debug      # Installation with debug logging
+    $(basename "$0") --backup     # Installation with backup
+
+For more information, visit:
+https://github.com/nobikaze/media-server-installer/
+EOF
+    exit 0
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            usage
+            ;;
+        -v|--version)
+            echo "Media Server Installer v${SCRIPT_VERSION}"
+            exit 0
+            ;;
+        -d|--debug)
+            LOG_LEVEL=$LOG_LEVEL_DEBUG
+            shift
+            ;;
+        -b|--backup)
+            DO_BACKUP=1
+            shift
+            ;;
+        -r|--restore)
+            RESTORE_FILE="$2"
+            shift 2
+            ;;
+        --skip-docker)
+            SKIP_DOCKER=1
+            shift
+            ;;
+        --unattended)
+            UNATTENDED=1
+            shift
+            ;;
+        *)
+            error "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
 # ─────────────────────────────────────────────────────────────
 # Media Server Installer (MSI) for Linux
 # Sets up Jellyfin + media stack using Docker
@@ -37,12 +102,52 @@ readonly CONTAINER_DIR="${BASE_DIR}/containers"
 readonly LIBRARY_DIR="${BASE_DIR}/library"
 readonly DOCKER_COMPOSE_FILE="${CONTAINER_DIR}/docker-compose.yml"
 
-# ─── Color Codes ──────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[1;36m'
-NC='\033[0m' # No Color
+# ─── Color Codes and Logging ─────────────────────────────────
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly CYAN='\033[1;36m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m' # No Color
+
+# Logging levels
+readonly LOG_LEVEL_DEBUG=0
+readonly LOG_LEVEL_INFO=1
+readonly LOG_LEVEL_WARN=2
+readonly LOG_LEVEL_ERROR=3
+
+# Default log level
+LOG_LEVEL=${LOG_LEVEL:-$LOG_LEVEL_INFO}
+
+# Logging functions
+log() {
+    local level="$1"
+    local message="$2"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    if [[ $level -ge $LOG_LEVEL ]]; then
+        case $level in
+            $LOG_LEVEL_DEBUG)
+                echo -e "${BLUE}[DEBUG]${NC} ${timestamp} - $message" >&2
+                ;;
+            $LOG_LEVEL_INFO)
+                echo -e "${GREEN}[INFO]${NC} ${timestamp} - $message" >&2
+                ;;
+            $LOG_LEVEL_WARN)
+                echo -e "${YELLOW}[WARN]${NC} ${timestamp} - $message" >&2
+                ;;
+            $LOG_LEVEL_ERROR)
+                echo -e "${RED}[ERROR]${NC} ${timestamp} - $message" >&2
+                ;;
+        esac
+    fi
+}
+
+debug() { log $LOG_LEVEL_DEBUG "$1"; }
+info() { log $LOG_LEVEL_INFO "$1"; }
+warn() { log $LOG_LEVEL_WARN "$1"; }
+error() { log $LOG_LEVEL_ERROR "$1"; }
 
 # ─── Spinner Setup ────────────────────────────────────────────
 spinner_pid=""
@@ -87,6 +192,55 @@ stop_spinner() {
     echo -e "\t${RED}[!]${NC} $message"
     exit "$exit_code"
   fi
+}
+
+# ─── Backup Functions ────────────────────────────────────────
+
+create_backup() {
+    local backup_dir="/var/backups/msi"
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="${backup_dir}/msi_backup_${timestamp}.tar.gz"
+
+    print_status "Creating backup"
+
+    # Ensure backup directory exists
+    mkdir -p "$backup_dir"
+
+    # Create backup of configuration and important directories
+    tar -czf "$backup_file" \
+        -C "$(dirname "$CONTAINER_DIR")" "$(basename "$CONTAINER_DIR")" \
+        /etc/msi \
+        2>/dev/null || {
+        abort "Failed to create backup"
+        return 1
+    }
+
+    print_success "Backup created at $backup_file"
+    return 0
+}
+
+restore_backup() {
+    local backup_file="$1"
+
+    if [[ ! -f "$backup_file" ]]; then
+        abort "Backup file not found: $backup_file"
+        return 1
+    }
+
+    print_status "Restoring from backup"
+
+    # Stop running containers
+    docker compose -f "$DOCKER_COMPOSE_FILE" down 2>/dev/null || true
+
+    # Restore backup
+    tar -xzf "$backup_file" -C / || {
+        abort "Failed to restore backup"
+        return 1
+    }
+
+    print_success "Backup restored from $backup_file"
+    return 0
 }
 
 # ─── Error Handling ────────────────────────────────────────
@@ -244,6 +398,54 @@ check_system_requirements() {
         abort "OpenSSL does not support -6 option for password hashing"
     fi
     print_success "System requirements met"
+}
+
+# ─── Configuration Management ─────────────────────────────────
+
+# Configuration defaults
+declare -A DEFAULT_CONFIG=(
+    ["cidr"]="192.168.1.0/24"
+    ["USER_TZ"]="$DEFAULT_TIMEZONE"
+    ["motd_path"]="/etc/motd"
+)
+
+save_config() {
+    local config_file="/etc/msi/config"
+    local config_dir="/etc/msi"
+
+    mkdir -p "$config_dir"
+
+    {
+        echo "# Media Server Installer Configuration"
+        echo "# Generated on: $(date)"
+        echo "# Version: $SCRIPT_VERSION"
+        echo
+        for key in "${!config[@]}"; do
+            echo "${key}=${config[$key]}"
+        done
+    } > "$config_file"
+
+    chmod 600 "$config_file"
+    debug "Configuration saved to $config_file"
+}
+
+load_config() {
+    local config_file="/etc/msi/config"
+
+    if [[ -f "$config_file" ]]; then
+        debug "Loading configuration from $config_file"
+        while IFS='=' read -r key value; do
+            [[ $key =~ ^#.*$ ]] && continue
+            [[ -z $key ]] && continue
+            config["$key"]="$value"
+        done < "$config_file"
+    else
+        debug "No existing configuration found"
+        # Load defaults
+        for key in "${!DEFAULT_CONFIG[@]}"; do
+            config["$key"]="${DEFAULT_CONFIG[$key]}"
+        done
+    fi
 }
 
 # ─── Input Validation Functions ──────────────────────────────
@@ -731,6 +933,69 @@ print_success "Media stack up"
 print_status "Installing 'msi-update' script"
 install -m 0755 ./msi-update.sh /usr/local/bin/msi-update
 print_success "'msi-update' command installed"
+
+# ─── Health Check Functions ─────────────────────────────────
+
+check_container_health() {
+    local container_name="$1"
+    local max_attempts=${2:-30}
+    local delay=${3:-2}
+    local attempt=1
+
+    print_status "Checking health of $container_name"
+
+    while [[ $attempt -le $max_attempts ]]; do
+        if docker container inspect "$container_name" &>/dev/null; then
+            local status
+            status=$(docker container inspect --format '{{.State.Health.Status}}' "$container_name" 2>/dev/null || echo "none")
+
+            case "$status" in
+                "healthy")
+                    print_success "$container_name is healthy"
+                    return 0
+                    ;;
+                "unhealthy")
+                    abort "$container_name is unhealthy"
+                    return 1
+                    ;;
+                "none")
+                    # Container has no health check, check if it's running
+                    if docker container inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null | grep -q "true"; then
+                        print_success "$container_name is running"
+                        return 0
+                    fi
+                    ;;
+            esac
+        fi
+
+        debug "Waiting for $container_name (attempt $attempt/$max_attempts)"
+        sleep "$delay"
+        ((attempt++))
+    done
+
+    abort "Timeout waiting for $container_name to be healthy"
+    return 1
+}
+
+verify_services() {
+    print_status "Verifying all services"
+
+    local services=(
+        "jellyfin"
+        "prowlarr"
+        "sonarr"
+        "radarr"
+        "bazarr"
+        "qbittorrent"
+        "jdownloader-2"
+    )
+
+    for service in "${services[@]}"; do
+        check_container_health "$service"
+    done
+
+    print_success "All services verified"
+}
 
 # ─── Final Info ─────────────────────────────────────────────
 

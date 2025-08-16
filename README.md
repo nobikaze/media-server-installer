@@ -25,6 +25,8 @@ This project now leverages an **AI-driven developer approach** to ensure it’s 
 
 In short, this installer isn’t just about media servers anymore — it’s about bringing the **best of AI-enhanced development** into your homelab.
 
+By adopting an AI-driven development approach, this project not only improves its immediate usability but also secures its long-term evolution. AI enables faster iteration cycles, where installation workflows, security practices, and documentation can be continuously analyzed, tested, and refined with greater precision. This reduces the likelihood of configuration errors, ensures compatibility across diverse environments, and promotes more resilient system design. Moreover, AI-driven insights help identify performance bottlenecks and streamline deployment strategies, making the installer more adaptive to future technological shifts. For contributors and maintainers, this means less time spent on repetitive fixes and more energy devoted to innovation, community-driven features, and sustainable growth. Ultimately, integrating AI into the development lifecycle transforms this project from a static installer into a living, intelligent framework — one that learns, adapts, and scales alongside the needs of modern self-hosters and developers.
+
 ---
 
 ## 📦 Overview

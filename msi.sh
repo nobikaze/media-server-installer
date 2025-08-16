@@ -97,7 +97,6 @@ begin_transaction() {
     local description="$1"
     TRANSACTION_ID=$(date +%s)
     mkdir -p "$(dirname "$TRANSACTION_LOG")"
-    case $1 in
     debug "Started transaction $TRANSACTION_ID: $description"
 }
 
@@ -1164,36 +1163,6 @@ else
     print_status "Interactive configuration collection not implemented."
     abort "Interactive mode is not yet supported in this version."
 fi
-        validate_timezone \
-        "❌ Invalid timezone. Format should be Region/City (e.g. America/New_York, Europe/London)
-   You can find valid values in /usr/share/zoneinfo/"
-
-    collect_input \
-        "[4/5] Tunnel user: " \
-        "tunnel_user" \
-        validate_username \
-        "❌ Invalid username format. Try again."
-
-    collect_input \
-        "[4.5/5] Tunnel user password: " \
-        "tunnel_pass" \
-        validate_password \
-        "❌ Password must be at least 6 characters long." \
-        "true"
-    collect_input \
-        "[5/5] Optional MOTD path (e.g. /etc/motd): " \
-        "motd_path"
-
-    echo -e "\n${CYAN}Configuration summary:${NC}"
-    echo -e "  IP CIDR:         ${config[cidr]}"
-    echo -e "  Docker user:     ${config[docker_user]}"
-    echo -e "  Timezone:        ${config[USER_TZ]}"
-    echo -e "  Tunnel user:     ${config[tunnel_user]}"
-    echo -e "  MOTD path:       ${config[motd_path]:-None}"
-
-  read -r -p "Proceed? (y/n): " yn
-  [[ "$yn" == "y" ]] && break
-done
 
 pause
 print_success "Configuration complete"
@@ -1404,6 +1373,11 @@ verify_docker_installation() {
 
 print_status "Installing Docker"
 
+# Remove any old Docker installations
+for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do
+    apt remove $pkg -y &>/dev/null || true
+done
+
 # Determine OS for Docker repository
 . /etc/os-release
 if [[ ! "$ID" =~ ^(debian|ubuntu)$ ]]; then
@@ -1413,9 +1387,9 @@ fi
 DOCKER_REPO_BASE="https://download.docker.com/linux/${ID}"
 
 # Set up Docker repository
-install -m 0755 -d /etc/apt/keyrings > /dev/null 2>&1
+mkdir -p /etc/apt/keyrings
 curl -fsSL "${DOCKER_REPO_BASE}/gpg" -o /etc/apt/keyrings/docker.asc || abort "Failed to download Docker GPG key"
-chmod a+r /etc/apt/keyrings/docker.asc > /dev/null 2>&1
+chmod a+r /etc/apt/keyrings/docker.asc
 
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] ${DOCKER_REPO_BASE} \
@@ -1479,6 +1453,18 @@ create_service_directories() {
     return 0
 }
 
+# ─── User Setup ───────────────────────────────────────────
+
+print_status "Setting up Docker user"
+if ! id "${config[docker_user]}" &>/dev/null; then
+    useradd -m -s /bin/bash "${config[docker_user]}"
+    usermod -aG docker "${config[docker_user]}"
+fi
+
+# Export user IDs for Docker containers
+export PUID=$(id -u "${config[docker_user]}")
+export PGID=$(id -g "${config[docker_user]}")
+
 # ─── Docker Setup ──────────────────────────────────────────
 
 create_service_directories "${config[docker_user]}"
@@ -1489,6 +1475,8 @@ print_success "Directories created"
 print_status "Creating docker-compose file"
 
 cat << EOF > "$CONTAINER_DIR/docker-compose.yml"
+version: "3.8"
+
 services:
   # admin-only services
 
@@ -1496,9 +1484,9 @@ services:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
     environment:
-      - "PUID=${PUID}"
-      - "PGID=${PGID}"
-      - "TZ=${USER_TZ}"
+      - "PUID=${PUID:-911}"
+      - "PGID=${PGID:-911}"
+      - "TZ=${USER_TZ:-UTC}"
     volumes:
       - ./prowlarr/config:/config
     networks:

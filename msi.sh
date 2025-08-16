@@ -24,19 +24,24 @@ NC='\033[0m' # No Color
 spinner_pid=""
 
 start_spinner() {
-  local message="$1"
-  local delay=0.1
-  local spinstr='-\|/'
+    local message="${1:-}"
+    local delay=0.1
+    local spinstr='-\|/'
+    local temp_pid
 
-  (
-    while true; do
-      for ((i=0; i<${#spinstr}; i++)); do
-        echo -ne "\r\t${YELLOW}[${spinstr:$i:1}]${NC} $message"
-        sleep "$delay"
-      done
-    done
-  ) &
-  spinner_pid=$!
+    (
+        trap 'exit 0' SIGTERM
+        while :; do
+            for ((i=0; i<${#spinstr}; i++)); do
+                printf "\r\t${YELLOW}[%c]${NC} %s" "${spinstr:$i:1}" "$message"
+                sleep "$delay"
+            done
+        done
+    ) &
+    temp_pid=$!
+    # Avoid race condition by declaring after subprocess starts
+    spinner_pid=$temp_pid
+    disown
 }
 
 stop_spinner() {
@@ -60,19 +65,61 @@ stop_spinner() {
   fi
 }
 
-# Clean up spinner if script exits or is interrupted
-trap 'if [[ -n "${spinner_pid:-}" ]]; then kill "${spinner_pid}" &>/dev/null || true; wait "${spinner_pid}" 2>/dev/null || true; spinner_pid=""; fi' EXIT
+# ─── Error Handling ────────────────────────────────────────
+cleanup() {
+    local exit_code=$?
+    if [[ -n "${spinner_pid:-}" ]]; then
+        kill "${spinner_pid}" &>/dev/null || true
+        wait "${spinner_pid}" 2>/dev/null || true
+        spinner_pid=""
+    fi
+    # Additional cleanup tasks can be added here
+    exit $exit_code
+}
+
+error_handler() {
+    local line_num=$1
+    local error_code=$2
+    local last_cmd=$3
+    echo -e "\n${RED}Error occurred in script at line: ${line_num}${NC}"
+    echo -e "${RED}Last command executed: ${last_cmd}${NC}"
+    echo -e "${RED}Exit code: ${error_code}${NC}"
+    exit $error_code
+}
+
+trap cleanup EXIT
+trap 'error_handler ${LINENO} $? "$BASH_COMMAND"' ERR
 
 # ─── Functions ───────────────────────────────────────────────
 
-print_status()   { start_spinner "$1"; }
-print_success()  { stop_spinner 0 "$1                   "; }
-abort()          { stop_spinner 1 "$1"; }
+# Logging and status functions
+print_status() {
+    local message="$1"
+    start_spinner "$message"
+}
 
-pause()          { sleep 0.5; }
+print_success() {
+    local message="$1"
+    stop_spinner 0 "$message                   "
+}
 
+abort() {
+    local message="$1"
+    stop_spinner 1 "$message"
+}
+
+pause() {
+    sleep 0.5
+}
+
+# Command validation function
 require_command() {
-    command -v "$1" &>/dev/null || abort "$1 is required but not installed"
+    local cmd="$1"
+    if ! command -v "$cmd" &>/dev/null; then
+        abort "$cmd is required but not installed"
+        return 1
+    fi
+    return 0
 }
 
 # ─── Intro ───────────────────────────────────────────────────
@@ -141,53 +188,108 @@ print_status "Checking root privileges"
 pause
 print_success "Root privileges"
 
+# ─── Input Validation Functions ──────────────────────────────
+
+validate_cidr() {
+    local cidr="$1"
+    [[ "$cidr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]
+}
+
+validate_username() {
+    local username="$1"
+    [[ "$username" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]
+}
+
+validate_timezone() {
+    local tz="$1"
+    [[ -f "/usr/share/zoneinfo/$tz" ]] && \
+    [[ "$tz" =~ ^[A-Za-z]+/[A-Za-z_-]+$ ]] && \
+    TZ="$tz" date > /dev/null 2>&1
+}
+
+validate_password() {
+    local pass="$1"
+    [[ ${#pass} -ge 6 ]]
+}
+
 # ─── Configuration ──────────────────────────────────────────
 
-echo "Collecting configuration"
-while true; do
-  while true; do
-    read -r -p "[1/5] Allowed CIDR IP (e.g. 192.168.1.0/24): " cidr
-    [[ "$cidr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]] && break
-    echo "❌ Invalid CIDR format. Try again."
-  done
-  while true; do
-    read -r -p "[2/5] Docker username: " docker_user
-    [[ "$docker_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] && id "$docker_user" &>/dev/null && break
-    echo "❌ Invalid or non-existent username. Try again."
-  done
-  while true; do
-    read -r -p "[3/5] Timezone (e.g. America/New_York): " USER_TZ
-    # Check if timezone is valid and exists
-    if [ -f "/usr/share/zoneinfo/$USER_TZ" ]; then
-      # Verify timezone format (Region/City)
-      if [[ "$USER_TZ" =~ ^[A-Za-z]+/[A-Za-z_-]+$ ]]; then
-        # Test if timezone is actually valid
-        if TZ="$USER_TZ" date > /dev/null 2>&1; then
-          break
-        fi
-      fi
-    fi
-    echo "❌ Invalid timezone. Format should be Region/City (e.g. America/New_York, Europe/London)"
-    echo "   You can find valid values in /usr/share/zoneinfo/"
-  done
-  while true; do
-    read -r -p "[4/5] Tunnel user: " tunnel_user
-    [[ "$tunnel_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] && break
-    echo "❌ Invalid username format. Try again."
-  done
-  while true; do
-    read -r -s -p "[4.5/5] Tunnel user password: " tunnel_pass && echo
-    [[ ${#tunnel_pass} -ge 6 ]] && break
-    echo "❌ Password must be at least 6 characters long."
-  done
-  read -r -p "[5/5] Optional MOTD path (e.g. /etc/motd): " motd_path
+echo -e "\n${CYAN}Collecting configuration${NC}"
+declare -A config
 
-  echo -e "\nConfiguration summary:"
-  echo -e "  IP CIDR:         $cidr"
-  echo -e "  Docker user:     $docker_user"
-  echo -e "  Timezone:        $USER_TZ"
-  echo -e "  Tunnel user:     $tunnel_user"
-  echo -e "  MOTD path:       $motd_path"
+collect_input() {
+    local prompt="$1"
+    local var_name="$2"
+    local validator="$3"
+    local error_msg="$4"
+    local silent="${5:-false}"
+    local input
+
+    while true; do
+        if [[ "$silent" == "true" ]]; then
+            read -r -s -p "$prompt" input && echo
+        else
+            read -r -p "$prompt" input
+        fi
+
+        if [[ -n "$validator" ]] && ! $validator "$input"; then
+            echo -e "${RED}$error_msg${NC}"
+            continue
+        fi
+
+        config[$var_name]="$input"
+        break
+    done
+}
+
+while true; do
+    collect_input \
+        "[1/5] Allowed CIDR IP (e.g. 192.168.1.0/24): " \
+        "cidr" \
+        validate_cidr \
+        "❌ Invalid CIDR format. Try again."
+
+    collect_input \
+        "[2/5] Docker username: " \
+        "docker_user" \
+        validate_username \
+        "❌ Invalid username format. Try again."
+
+    # Additional check for existing user
+    if ! id "${config[docker_user]}" &>/dev/null; then
+        echo -e "${RED}❌ User does not exist${NC}"
+        continue
+    fi
+
+    collect_input \
+        "[3/5] Timezone (e.g. America/New_York): " \
+        "USER_TZ" \
+        validate_timezone \
+        "❌ Invalid timezone. Format should be Region/City (e.g. America/New_York, Europe/London)
+   You can find valid values in /usr/share/zoneinfo/"
+
+    collect_input \
+        "[4/5] Tunnel user: " \
+        "tunnel_user" \
+        validate_username \
+        "❌ Invalid username format. Try again."
+
+    collect_input \
+        "[4.5/5] Tunnel user password: " \
+        "tunnel_pass" \
+        validate_password \
+        "❌ Password must be at least 6 characters long." \
+        "true"
+    collect_input \
+        "[5/5] Optional MOTD path (e.g. /etc/motd): " \
+        "motd_path"
+
+    echo -e "\n${CYAN}Configuration summary:${NC}"
+    echo -e "  IP CIDR:         ${config[cidr]}"
+    echo -e "  Docker user:     ${config[docker_user]}"
+    echo -e "  Timezone:        ${config[USER_TZ]}"
+    echo -e "  Tunnel user:     ${config[tunnel_user]}"
+    echo -e "  MOTD path:       ${config[motd_path]:-None}"
 
   read -r -p "Proceed? (y/n): " yn
   [[ "$yn" == "y" ]] && break
